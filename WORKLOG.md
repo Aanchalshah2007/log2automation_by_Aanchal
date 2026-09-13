@@ -179,6 +179,14 @@ Claude Code was used as an implementation and analysis assistant for diagnostic 
 
 I made the engineering decisions based on the observed data and validation results rather than accepting model suggestions without checking them.
 
+### Step 1 output and repository cleanup
+
+By the end of the day, the final `segments.jsonl` output had been generated.
+
+During the repository setup, I initially stored `segments.jsonl` using Git LFS because I was treating it like a larger generated output. After checking the actual file size (~102 KB), I realised LFS was unnecessary and could make it less convenient for an evaluator to inspect directly on GitHub.
+
+I therefore removed `segments.jsonl` from Git LFS and moved it back to a normal Git-tracked file. This keeps the final output simple and directly viewable in the repository, while the much larger raw datasets remain excluded from Git.
+
 ### End-of-day decision
 
 I had a working direction for Step 1 and, more importantly, a clearer understanding of **which signals were reliable and which were misleading**.
