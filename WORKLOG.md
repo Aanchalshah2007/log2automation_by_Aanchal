@@ -4,7 +4,7 @@ A short record of what I was thinking, what I tried, what did not work, and the 
 
 ---
 
-## Day 1 — 2026-09-14
+## Day 1 - 2026-09-13
 ### Reading the brief and setting up
 
 ### What I was thinking
@@ -56,7 +56,8 @@ The main decision from Day 1 was:
 
 ---
 
-## Day 2 — Understanding the event stream and building Step 1
+## Day 2 - 2026-09-14
+### Understanding the event stream and building Step 1
 
 ### What I was thinking
 
