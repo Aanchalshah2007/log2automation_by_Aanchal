@@ -30,7 +30,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Any
 
-from features import resolve_contexts, enrich_side_apps, case_anchor, l2_open_anchors
+from features import resolve_contexts, enrich_side_apps, case_anchor, l2_case_anchors
 
 
 # ---- tuned on dataset A (see reports/step1_segmentation_report.md) ----------
@@ -163,11 +163,12 @@ def _l2_cores(events: list[dict[str, Any]], covered: list[tuple[int, int]]) -> l
     def is_covered(ts: int) -> bool:
         return any(a <= ts <= b for a, b in covered)
 
+    anchors, family = l2_case_anchors(events)
     cores: list[Core] = []
-    for e in l2_open_anchors(events):
+    for e in anchors:
         if is_covered(e["ts"]) or e.get("ctx") is None:
             continue
-        cores.append(Core(e["ts"], e["ts"], e["ctx"], None, None, kind="l2"))
+        cores.append(Core(e["ts"], e["ts"], e["ctx"], None, None, kind=f"l2-{family}"))
     return cores
 
 

@@ -192,6 +192,67 @@ def enrich_side_apps(events: Iterable[dict[str, Any]]) -> None:
                         "other" if cur else None)
 
 
+# Below this ratio of browser-exits per in-browser paste, the work is
+# browser-resident and the case boundary is the click that follows the paste;
+# above it the worker leaves the browser once per case and the boundary is the
+# last click before that.  Dataset A's extension-less sessions measure 0.96-2.21
+# and dataset B's measures 0.43, so 0.8 sits inside the observed gap -- but that
+# gap is narrow and rests on 8 sessions.  See the report's assumptions section.
+RESIDENT_RATIO = 0.8
+
+
+def l2_case_anchors(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    """Pick the L2 anchor family that matches this session's own rhythm.
+
+    Two workflow shapes appear in these logs and they leave different L2 traces:
+
+    * *excursion-driven* (dataset A): the worker picks a row, leaves the browser
+      for Excel/Word/Notepad, comes back and commits.  One browser exit per case,
+      so the anchor is the last browser click before the exit.
+    * *browser-resident* (dataset B): the worker picks a row, pastes into the
+      note field and presses the action button without ever leaving the browser.
+      Few exits, one paste per case, so the anchor is the click right after the
+      paste.
+
+    Taking the union of both families double-fires on excursion-driven sessions
+    (58 of dataset A's 204 extension-less executions would get two anchors), so
+    the family is chosen per session from the exit-to-paste ratio.
+    """
+    exits = pastes = 0
+    prev = None
+    for e in events:
+        st = e.get("station")
+        if st == "portal" and e.get("type") == "shortcut" and e.get("keys") == "Ctrl+V":
+            pastes += 1
+        if st is not None:
+            if prev == "portal" and st != "portal":
+                exits += 1
+            prev = st
+    if pastes and exits / pastes < RESIDENT_RATIO:
+        return l2_paste_commit_anchors(events), "resident"
+    return l2_open_anchors(events), "excursion"
+
+
+def l2_paste_commit_anchors(events: list[dict[str, Any]],
+                            window_ms: int = 3500) -> list[dict[str, Any]]:
+    """Browser mouse_click shortly after an in-browser paste = the action button.
+
+    This is the L2 shadow of `#btn-<module>-ok` for browser-resident work.
+    """
+    out: list[dict[str, Any]] = []
+    last_paste: int | None = None
+    for e in events:
+        if e.get("station") != "portal":
+            continue
+        if e.get("type") == "shortcut" and e.get("keys") == "Ctrl+V":
+            last_paste = e["ts"]
+        elif (e.get("type") in ("mouse_click", "mouse_double_click")
+              and last_paste is not None and 0 <= e["ts"] - last_paste <= window_ms):
+            out.append(e)
+            last_paste = None
+    return out
+
+
 def l2_open_anchors(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """L2-only shadow of the worklist row-click, for extension-less sessions.
 
