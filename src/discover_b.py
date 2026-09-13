@@ -7,7 +7,7 @@ Three questions, in order:
 """
 import collections, json, statistics, sys
 
-from common import load_sessions, PORT_SYSTEM, BUILD
+from common import load_sessions, PORT_SYSTEM, REPORTS
 import screenmap, segmenter
 from fingerprint import fingerprint, cosine, centroid, two_means
 
@@ -67,4 +67,6 @@ json.dump({"screens": {k: {"segments": len(v), "median_s": statistics.median(f["
                        for k, v in fps.items()},
            "split_separation": splits,
            "top_merge_pairs": [[round(s, 3), a, b] for s, a, b in pairs[:8]]},
-          open(f"{BUILD}/discovery_B.json", "w"), ensure_ascii=False, indent=1)
+          open(f"{REPORTS}/discovery_B.json", "w", encoding="utf-8"),
+          ensure_ascii=False, indent=1)
+print(f"\nwrote {REPORTS}/discovery_B.json")

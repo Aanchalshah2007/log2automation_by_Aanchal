@@ -1,0 +1,22 @@
+{
+ "note": "sweep_best is what the dev-split sweep chose; shipped is what segmenter.py actually uses. Where they differ, see overrides.",
+ "sweep_best": {
+  "LEAD_FRAC": 0.19,
+  "TAIL_FRAC": 0.22,
+  "ABSORB_MULT": 14.0,
+  "REOPEN_MERGE_MS": 0
+ },
+ "shipped": {
+  "LEAD_FRAC": 0.21,
+  "TAIL_FRAC": 0.22,
+  "ABSORB_MULT": 14.0,
+  "REOPEN_MERGE_MS": 2500
+ },
+ "overrides": {
+  "LEAD_FRAC": "The sweep objective is scored at a 2 s boundary tolerance only, where 0.19 and 0.21 are within 0.003 F1 of each other. At 1 s tolerance 0.21 is far better (F1 0.553 vs 0.486), and 0.21 is also closer to the physically measured lead (4.66 s / 20.9 s = 0.223).",
+  "REOPEN_MERGE_MS": "Inert on dataset A -- every value from 0 to 8000 ms gives identical metrics, because A's row ids carry the case id so the same-key branch already merges re-selections. Kept at 2500 as a guard for dataset B, whose row selectors are positional: there a genuine re-click on the same row index would otherwise open a second case. Untested -- see the report's assumptions."
+ },
+ "objective": "boundary F1@2s + mean IoU + ARI, on the dev split",
+ "dev_sessions": 42,
+ "holdout_sessions": 21
+}

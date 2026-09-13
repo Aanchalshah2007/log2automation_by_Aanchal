@@ -1,0 +1,410 @@
+{
+ "generated_by": "src/validate_a.py",
+ "constants": {
+  "LEAD_FRAC": 0.21,
+  "TAIL_FRAC": 0.22,
+  "BOUNDARY_FRAC": 0.44,
+  "ABSORB_MULT": 14.0,
+  "MIN_EVENTS": 6,
+  "MIN_DURATION_MS": 3000,
+  "REOPEN_MERGE_MS": 2500
+ },
+ "splits": {
+  "dev_sessions": 42,
+  "holdout_sessions": 21
+ },
+ "metrics": {
+  "all": {
+   "segments_pred": 1954,
+   "segments_true": 2009,
+   "ratio": 0.9726,
+   "boundary": {
+    "1s": {
+     "precision": 0.5733,
+     "recall": 0.5345,
+     "f1": 0.5533,
+     "n_pred": 2025,
+     "n_true": 2172,
+     "tp": 1161
+    },
+    "2s": {
+     "precision": 0.8894,
+     "recall": 0.8292,
+     "f1": 0.8582,
+     "n_pred": 2025,
+     "n_true": 2172,
+     "tp": 1801
+    },
+    "5s": {
+     "precision": 0.9205,
+     "recall": 0.8582,
+     "f1": 0.8883,
+     "n_pred": 2025,
+     "n_true": 2172,
+     "tp": 1864
+    }
+   },
+   "mean_iou": 0.8653,
+   "median_iou": 0.9456,
+   "matched_iou50": 0.9099,
+   "matched_iou25": 0.9607,
+   "over_segmented_execs": 45,
+   "under_segmenting_preds": 53,
+   "coverage": {
+    "pred_time_h": 14.6665,
+    "gt_time_h": 15.1207,
+    "session_time_h": 16.0006,
+    "gt_time_recovered": 0.9427,
+    "pred_time_inside_gt": 0.9719
+   },
+   "labels": {
+    "n": 1956,
+    "purity": 0.9576,
+    "inverse_purity": 0.9576,
+    "homogeneity": 0.9152,
+    "completeness": 0.9155,
+    "v_measure": 0.9154,
+    "ari": 0.912,
+    "n_labels": 15,
+    "n_gt_codes": 15
+   }
+  },
+  "extension_present": {
+   "segments_pred": 1791,
+   "segments_true": 1805,
+   "ratio": 0.9922,
+   "boundary": {
+    "1s": {
+     "precision": 0.5849,
+     "recall": 0.5564,
+     "f1": 0.5703,
+     "n_pred": 1855,
+     "n_true": 1950,
+     "tp": 1085
+    },
+    "2s": {
+     "precision": 0.9078,
+     "recall": 0.8636,
+     "f1": 0.8852,
+     "n_pred": 1855,
+     "n_true": 1950,
+     "tp": 1684
+    },
+    "5s": {
+     "precision": 0.9332,
+     "recall": 0.8877,
+     "f1": 0.9099,
+     "n_pred": 1855,
+     "n_true": 1950,
+     "tp": 1731
+    }
+   },
+   "mean_iou": 0.8913,
+   "median_iou": 0.9485,
+   "matched_iou50": 0.9446,
+   "matched_iou25": 0.9657,
+   "over_segmented_execs": 27,
+   "under_segmenting_preds": 6,
+   "coverage": {
+    "pred_time_h": 13.9731,
+    "gt_time_h": 14.4309,
+    "session_time_h": 15.1607,
+    "gt_time_recovered": 0.941,
+    "pred_time_inside_gt": 0.9718
+   },
+   "labels": {
+    "n": 1757,
+    "purity": 0.9966,
+    "inverse_purity": 0.9966,
+    "homogeneity": 0.9927,
+    "completeness": 0.9928,
+    "v_measure": 0.9927,
+    "ari": 0.993,
+    "n_labels": 15,
+    "n_gt_codes": 15
+   }
+  },
+  "extension_absent": {
+   "segments_pred": 163,
+   "segments_true": 204,
+   "ratio": 0.799,
+   "boundary": {
+    "1s": {
+     "precision": 0.4471,
+     "recall": 0.3423,
+     "f1": 0.3878,
+     "n_pred": 170,
+     "n_true": 222,
+     "tp": 76
+    },
+    "2s": {
+     "precision": 0.6882,
+     "recall": 0.527,
+     "f1": 0.5969,
+     "n_pred": 170,
+     "n_true": 222,
+     "tp": 117
+    },
+    "5s": {
+     "precision": 0.7824,
+     "recall": 0.5991,
+     "f1": 0.6786,
+     "n_pred": 170,
+     "n_true": 222,
+     "tp": 133
+    }
+   },
+   "mean_iou": 0.6355,
+   "median_iou": 0.5937,
+   "matched_iou50": 0.6029,
+   "matched_iou25": 0.9167,
+   "over_segmented_execs": 18,
+   "under_segmenting_preds": 47,
+   "coverage": {
+    "pred_time_h": 2.2135,
+    "gt_time_h": 2.2158,
+    "session_time_h": 2.8624,
+    "gt_time_recovered": 0.9675,
+    "pred_time_inside_gt": 0.9685
+   },
+   "labels": {
+    "n": 199,
+    "purity": 0.6131,
+    "inverse_purity": 0.6131,
+    "homogeneity": 0.5712,
+    "completeness": 0.559,
+    "v_measure": 0.565,
+    "ari": 0.3614,
+    "n_labels": 15,
+    "n_gt_codes": 15
+   }
+  },
+  "dev": {
+   "segments_pred": 1293,
+   "segments_true": 1348,
+   "ratio": 0.9592,
+   "boundary": {
+    "1s": {
+     "precision": 0.5652,
+     "recall": 0.5206,
+     "f1": 0.542,
+     "n_pred": 1341,
+     "n_true": 1456,
+     "tp": 758
+    },
+    "2s": {
+     "precision": 0.874,
+     "recall": 0.8049,
+     "f1": 0.838,
+     "n_pred": 1341,
+     "n_true": 1456,
+     "tp": 1172
+    },
+    "5s": {
+     "precision": 0.9083,
+     "recall": 0.8365,
+     "f1": 0.8709,
+     "n_pred": 1341,
+     "n_true": 1456,
+     "tp": 1218
+    }
+   },
+   "mean_iou": 0.8433,
+   "median_iou": 0.9434,
+   "matched_iou50": 0.8858,
+   "matched_iou25": 0.9429,
+   "over_segmented_execs": 36,
+   "under_segmenting_preds": 42,
+   "coverage": {
+    "pred_time_h": 12.3894,
+    "gt_time_h": 12.8975,
+    "session_time_h": 13.7058,
+    "gt_time_recovered": 0.924,
+    "pred_time_inside_gt": 0.9619
+   },
+   "labels": {
+    "n": 1295,
+    "purity": 0.9444,
+    "inverse_purity": 0.9444,
+    "homogeneity": 0.8955,
+    "completeness": 0.8966,
+    "v_measure": 0.8961,
+    "ari": 0.8858,
+    "n_labels": 15,
+    "n_gt_codes": 15
+   }
+  },
+  "holdout": {
+   "segments_pred": 661,
+   "segments_true": 661,
+   "ratio": 1.0,
+   "boundary": {
+    "1s": {
+     "precision": 0.5892,
+     "recall": 0.5628,
+     "f1": 0.5757,
+     "n_pred": 684,
+     "n_true": 716,
+     "tp": 403
+    },
+    "2s": {
+     "precision": 0.9196,
+     "recall": 0.8785,
+     "f1": 0.8986,
+     "n_pred": 684,
+     "n_true": 716,
+     "tp": 629
+    },
+    "5s": {
+     "precision": 0.9444,
+     "recall": 0.9022,
+     "f1": 0.9229,
+     "n_pred": 684,
+     "n_true": 716,
+     "tp": 646
+    }
+   },
+   "mean_iou": 0.9103,
+   "median_iou": 0.9492,
+   "matched_iou50": 0.9592,
+   "matched_iou25": 0.997,
+   "over_segmented_execs": 9,
+   "under_segmenting_preds": 11,
+   "coverage": {
+    "pred_time_h": 7.1097,
+    "gt_time_h": 6.9529,
+    "session_time_h": 7.8152,
+    "gt_time_recovered": 0.9912,
+    "pred_time_inside_gt": 0.9694
+   },
+   "labels": {
+    "n": 661,
+    "purity": 0.9834,
+    "inverse_purity": 0.9834,
+    "homogeneity": 0.9737,
+    "completeness": 0.9734,
+    "v_measure": 0.9736,
+    "ari": 0.9678,
+    "n_labels": 15,
+    "n_gt_codes": 15
+   }
+  }
+ },
+ "ablations": {
+  "full": {
+   "segments": 1954,
+   "bF1@2s": 0.858,
+   "mean_iou": 0.865,
+   "iou50": 0.91,
+   "gt_time_recovered": 0.943,
+   "ari": 0.912
+  },
+  "no L2 fallback (DOM anchors only)": {
+   "segments": 1777,
+   "bF1@2s": 0.84,
+   "mean_iou": 0.801,
+   "iou50": 0.849,
+   "gt_time_recovered": 0.895,
+   "ari": 0.992
+  },
+  "no OCR channel (no screen map)": {
+   "segments": 1791,
+   "bF1@2s": 0.836,
+   "mean_iou": 0.801,
+   "iou50": 0.849,
+   "gt_time_recovered": 0.898,
+   "ari": 0.993
+  },
+  "neither": {
+   "segments": 1777,
+   "bF1@2s": 0.84,
+   "mean_iou": 0.801,
+   "iou50": 0.849,
+   "gt_time_recovered": 0.895,
+   "ari": 0.992
+  }
+ },
+ "label_vs_gt_code": {
+  "fin/leave-applications|G": 4,
+  "fin/leave-applications|H": 139,
+  "fin/leave-applications|I": 1,
+  "fin/leave-applications|J": 1,
+  "fin/leave-applications|K": 2,
+  "fin/onboarding|C": 1,
+  "fin/onboarding|J": 94,
+  "fin/payroll-items|F": 2,
+  "fin/payroll-items|G": 127,
+  "fin/payroll-items|I": 2,
+  "fin/payroll-items|J": 2,
+  "fin/resident-tax|B": 1,
+  "fin/resident-tax|C": 1,
+  "fin/resident-tax|F": 162,
+  "fin/resident-tax|G": 1,
+  "fin/social-insurance|A": 1,
+  "fin/social-insurance|F": 2,
+  "fin/social-insurance|G": 2,
+  "fin/social-insurance|I": 106,
+  "fin/social-insurance|J": 1,
+  "fin/social-insurance|L": 1,
+  "hr/leave-applications|A": 2,
+  "hr/leave-applications|B": 2,
+  "hr/leave-applications|C": 145,
+  "hr/leave-applications|E": 1,
+  "hr/leave-applications|H": 1,
+  "hr/leave-applications|M": 2,
+  "hr/onboarding|A": 2,
+  "hr/onboarding|C": 2,
+  "hr/onboarding|E": 109,
+  "hr/onboarding|H": 1,
+  "hr/onboarding|I": 1,
+  "hr/onboarding|K": 1,
+  "hr/onboarding|L": 1,
+  "hr/payroll-items|A": 2,
+  "hr/payroll-items|B": 117,
+  "hr/payroll-items|G": 1,
+  "hr/resident-tax|A": 148,
+  "hr/resident-tax|B": 1,
+  "hr/resident-tax|C": 1,
+  "hr/resident-tax|D": 1,
+  "hr/social-insurance|A": 1,
+  "hr/social-insurance|B": 3,
+  "hr/social-insurance|C": 3,
+  "hr/social-insurance|D": 109,
+  "hr/social-insurance|E": 1,
+  "hr/social-insurance|G": 1,
+  "hr/social-insurance|H": 1,
+  "hr/social-insurance|I": 1,
+  "hr/social-insurance|J": 1,
+  "hr/social-insurance|L": 1,
+  "ops/leave-applications|A": 1,
+  "ops/leave-applications|B": 1,
+  "ops/leave-applications|C": 1,
+  "ops/leave-applications|J": 1,
+  "ops/leave-applications|L": 1,
+  "ops/leave-applications|M": 151,
+  "ops/onboarding|D": 1,
+  "ops/onboarding|I": 1,
+  "ops/onboarding|N": 3,
+  "ops/onboarding|O": 108,
+  "ops/payroll-items|C": 1,
+  "ops/payroll-items|G": 1,
+  "ops/payroll-items|I": 1,
+  "ops/payroll-items|K": 1,
+  "ops/payroll-items|L": 120,
+  "ops/resident-tax|G": 2,
+  "ops/resident-tax|H": 1,
+  "ops/resident-tax|K": 115,
+  "ops/resident-tax|L": 4,
+  "ops/resident-tax|O": 1,
+  "ops/social-insurance|L": 1,
+  "ops/social-insurance|N": 123
+ },
+ "durations_s": {
+  "n": 1954,
+  "min": 6.9,
+  "p10": 23.2,
+  "median": 32.3,
+  "p90": 70.2,
+  "max": 291.9
+ }
+}

@@ -6,7 +6,7 @@ values are picking up something real or just memorising dataset A.
 """
 import itertools, json, sys
 import segmenter
-from common import load_sessions
+from common import load_sessions, REPORTS
 from groundtruth import load_gt
 import evaluate
 
@@ -84,6 +84,30 @@ if __name__ == "__main__":
     for fb in (False, True):
         show(f"HOLD fallback={fb}", score(hold, fb, LEAD_FRAC=LEAD, TAIL_FRAC=TAIL,
                                            ABSORB_MULT=ABS, REOPEN_MERGE_MS=RE))
-    json.dump({"LEAD_FRAC": LEAD, "TAIL_FRAC": TAIL, "ABSORB_MULT": ABS,
-               "REOPEN_MERGE_MS": RE}, open("../build/tuned.json", "w"), indent=1)
-    print(f"\nwrote build/tuned.json  (dev={len(dev)} sessions, holdout={len(hold)})")
+    # Two of the sweep winners are NOT what ships, and the record has to say so
+    # rather than quietly disagree with segmenter.py.
+    shipped = {k: getattr(segmenter, k) for k in
+               ("LEAD_FRAC", "TAIL_FRAC", "ABSORB_MULT", "REOPEN_MERGE_MS")}
+    sweep = {"LEAD_FRAC": LEAD, "TAIL_FRAC": TAIL, "ABSORB_MULT": ABS, "REOPEN_MERGE_MS": RE}
+    overrides = {
+        "LEAD_FRAC": ("The sweep objective is scored at a 2 s boundary tolerance only, "
+                      "where 0.19 and 0.21 are within 0.003 F1 of each other. At 1 s "
+                      "tolerance 0.21 is far better (F1 0.553 vs 0.486), and 0.21 is also "
+                      "closer to the physically measured lead (4.66 s / 20.9 s = 0.223)."),
+        "REOPEN_MERGE_MS": ("Inert on dataset A -- every value from 0 to 8000 ms gives "
+                            "identical metrics, because A's row ids carry the case id so "
+                            "the same-key branch already merges re-selections. Kept at "
+                            "2500 as a guard for dataset B, whose row selectors are "
+                            "positional: there a genuine re-click on the same row index "
+                            "would otherwise open a second case. Untested -- see the "
+                            "report's assumptions."),
+    }
+    json.dump({"note": "sweep_best is what the dev-split sweep chose; shipped is what "
+                       "segmenter.py actually uses. Where they differ, see overrides.",
+               "sweep_best": sweep, "shipped": shipped,
+               "overrides": {k: v for k, v in overrides.items() if sweep[k] != shipped[k]},
+               "objective": "boundary F1@2s + mean IoU + ARI, on the dev split",
+               "dev_sessions": len(dev), "holdout_sessions": len(hold)},
+              open(f"{REPORTS}/tuned_constants.json", "w"), indent=1)
+    print(f"\nwrote {REPORTS}/tuned_constants.json  "
+          f"(dev={len(dev)} sessions, holdout={len(hold)})")

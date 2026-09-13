@@ -15,7 +15,8 @@ from typing import Any, Iterator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BUILD = os.path.join(ROOT, "build")
+BUILD = os.path.join(ROOT, "build")      # derived cache, git-ignored
+REPORTS = os.path.join(ROOT, "reports")  # reviewable results, committed
 
 DATASETS = {
     "A": os.path.join(ROOT, "dataset_a-20260913T153639Z-1-001", "dataset_a"),

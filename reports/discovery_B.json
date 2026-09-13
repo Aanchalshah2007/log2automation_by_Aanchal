@@ -1,0 +1,118 @@
+{
+ "screens": {
+  "fin/payroll-items": {
+   "segments": 74,
+   "median_s": 15.5155,
+   "name_jp": "請求書承認・経費精算"
+  },
+  "hr/payroll-items": {
+   "segments": 134,
+   "median_s": 10.65,
+   "name_jp": "経費精算・給与変更"
+  },
+  "fin/resident-tax": {
+   "segments": 77,
+   "median_s": 10.781,
+   "name_jp": "発注管理"
+  },
+  "ops/leave-applications": {
+   "segments": 59,
+   "median_s": 20.453,
+   "name_jp": "契約管理"
+  },
+  "ops/social-insurance": {
+   "segments": 40,
+   "median_s": 10.578,
+   "name_jp": "IT申請"
+  },
+  "ops/payroll-items": {
+   "segments": 67,
+   "median_s": 10.564,
+   "name_jp": "在庫管理"
+  },
+  "hr/onboarding": {
+   "segments": 65,
+   "median_s": 15.924,
+   "name_jp": "入社手続き"
+  },
+  "fin/social-insurance": {
+   "segments": 8,
+   "median_s": 21.012500000000003,
+   "name_jp": "予算差異分析"
+  },
+  "hr/social-insurance": {
+   "segments": 35,
+   "median_s": 12.157,
+   "name_jp": "福利厚生申請"
+  },
+  "fin/onboarding": {
+   "segments": 37,
+   "median_s": 19.808,
+   "name_jp": "支払処理"
+  },
+  "hr/leave-applications": {
+   "segments": 56,
+   "median_s": 8.991,
+   "name_jp": "勤怠・休暇申請"
+  },
+  "fin/leave-applications": {
+   "segments": 32,
+   "median_s": 17.9925,
+   "name_jp": "経費承認（管理職）"
+  }
+ },
+ "split_separation": {
+  "fin/leave-applications": 0.2622132407258686,
+  "fin/onboarding": 0.27987759324058326,
+  "fin/payroll-items": 0.2670571314787511,
+  "fin/resident-tax": 0.0780586486737479,
+  "hr/onboarding": 0.09383007887015482,
+  "hr/payroll-items": 0.3080670434596504,
+  "hr/social-insurance": 0.041856404315686935,
+  "ops/leave-applications": 0.16788034260505025,
+  "ops/payroll-items": 0.31754185169598537,
+  "ops/social-insurance": 0.23655286530191633
+ },
+ "top_merge_pairs": [
+  [
+   0.989,
+   "hr/payroll-items",
+   "ops/payroll-items"
+  ],
+  [
+   0.959,
+   "hr/social-insurance",
+   "ops/social-insurance"
+  ],
+  [
+   0.953,
+   "fin/payroll-items",
+   "hr/payroll-items"
+  ],
+  [
+   0.938,
+   "fin/payroll-items",
+   "ops/payroll-items"
+  ],
+  [
+   0.928,
+   "fin/onboarding",
+   "hr/onboarding"
+  ],
+  [
+   0.888,
+   "fin/leave-applications",
+   "ops/leave-applications"
+  ],
+  [
+   0.88,
+   "fin/leave-applications",
+   "hr/leave-applications"
+  ],
+  [
+   0.855,
+   "hr/leave-applications",
+   "ops/leave-applications"
+  ]
+ ]
+}

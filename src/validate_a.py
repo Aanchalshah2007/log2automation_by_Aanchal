@@ -1,6 +1,6 @@
 """Full dataset-A validation, written to build/validation_A.json for the report."""
 import json, statistics, collections
-from common import load_sessions, PORT_SYSTEM, BUILD
+from common import load_sessions, PORT_SYSTEM, REPORTS
 from groundtruth import load_gt
 from segmenter import segment_dataset
 import screenmap, evaluate
@@ -65,15 +65,44 @@ for l in labels:
     print(f"{l:24s}{row}")
 
 durs = sorted((p.end - p.start) / 1000 for v in pred.values() for p in v)
-json.dump({"metrics": {k: {kk: (vv if not isinstance(vv, dict) else
-                              {k2: (v2 if not isinstance(v2, list) else len(v2))
-                               for k2, v2 in vv.items() if k2 != "matched_pairs"})
-                           for kk, vv in v.items() if kk != "segment" or True}
-                       for k, v in out.items() if False},
-           "ablations": abl,
-           "durations_s": {"n": len(durs), "min": durs[0], "p25": durs[len(durs)//4],
-                           "median": statistics.median(durs), "p75": durs[3*len(durs)//4],
-                           "p90": durs[int(.9*len(durs))], "max": durs[-1]}},
-          open(f"{BUILD}/validation_A.json", "w"), indent=1)
+
+
+def _flat(r):
+    """Metrics only -- drop matched_pairs, which is bookkeeping, not a result."""
+    return {
+        "segments_pred": r["segment"]["n_pred"],
+        "segments_true": r["segment"]["n_true"],
+        "ratio": round(r["segment"]["ratio"], 4),
+        "boundary": {f"{t//1000}s": {k: round(v, 4) for k, v in m.items()}
+                     for t, m in r["boundary"].items()},
+        "mean_iou": round(r["segment"]["mean_iou"], 4),
+        "median_iou": round(r["segment"]["median_iou"], 4),
+        "matched_iou50": round(r["segment"]["matched_iou50"], 4),
+        "matched_iou25": round(r["segment"]["matched_iou25"], 4),
+        "over_segmented_execs": r["segment"]["over_segmented_execs"],
+        "under_segmenting_preds": r["segment"]["under_segmenting_preds"],
+        "coverage": {k: round(v, 4) for k, v in r["coverage"].items()},
+        "labels": {k: (round(v, 4) if isinstance(v, float) else v)
+                   for k, v in r["label"].items() if k != "contingency"},
+    }
+
+
+payload = {
+    "generated_by": "src/validate_a.py",
+    "constants": {k: getattr(SG, k) for k in
+                  ("LEAD_FRAC", "TAIL_FRAC", "BOUNDARY_FRAC", "ABSORB_MULT",
+                   "MIN_EVENTS", "MIN_DURATION_MS", "REOPEN_MERGE_MS")},
+    "splits": {"dev_sessions": len(dev), "holdout_sessions": len(hold)},
+    "metrics": {k: _flat(v) for k, v in out.items()},
+    "ablations": abl,
+    "label_vs_gt_code": {f"{l}|{c}": n for (l, c), n in sorted(cont.items())},
+    "durations_s": {"n": len(durs), "min": round(durs[0], 1),
+                    "p10": round(durs[len(durs) // 10], 1),
+                    "median": round(statistics.median(durs), 1),
+                    "p90": round(durs[int(.9 * len(durs))], 1), "max": round(durs[-1], 1)},
+}
+with open(f"{REPORTS}/validation_A.json", "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, ensure_ascii=False, indent=1)
 print(f"\nsegment durations (s): median={statistics.median(durs):.1f} "
       f"p10={durs[len(durs)//10]:.1f} p90={durs[int(.9*len(durs))]:.1f} max={durs[-1]:.1f}")
+print(f"wrote {REPORTS}/validation_A.json")
