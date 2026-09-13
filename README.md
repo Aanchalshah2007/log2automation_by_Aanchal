@@ -1,6 +1,12 @@
+# Name - Shah Aanchal Sachinkumar
+# University - Indian Institute of Technology, Kharagpur 
+# Department - Aerospace Engineering
+# Personal Email ID - aanchalshah2007@gmail.com
+# Institute Email ID - aanchalshah2007.24@kgpian.iitkgp.ac.in
+
 # Operation logs → automation proposal
 
-FDE selection task. The client runs a desktop agent that records every keystroke, click
+The client runs a desktop agent that records every keystroke, click
 and application switch from back-office staff (HR, Finance, Logistics). Nothing in the
 log says which business process an operation belongs to. The job is to recover the units
 of work, decide where automation pays, and build something that runs.
