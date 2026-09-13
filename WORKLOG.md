@@ -1,266 +1,187 @@
-# Work log
+# Work Log
 
-My notes for each day: what I was thinking, what I tried, and what didn't work.
-
----
-
-## Day 1 — Reading the brief, and setting up
-
-No analysis today. I just wanted to understand what is actually being asked before
-touching the data.
-
-### Reading the task
-
-I read `README.md` (now `docs/TASK.md`) and `DATA_SCHEMA.md` a couple of times. A few
-things stood out.
-
-The three steps build on each other — recover the units of work, analyse them to find
-automation candidates, then build one. So Step 1 isn't really the deliverable, it's the
-foundation for the other two. If my segments are wrong, the ROI ranking in Step 2 is wrong
-too, and then I'd be building the wrong tool in Step 3. That made me want to spend real
-effort on Step 1 rather than rushing it.
-
-The line I kept coming back to: *"An approach that works well on Dataset A will not
-necessarily transfer to Dataset B."* Dataset A has ground truth and B doesn't, so the
-temptation is to tune hard on A. But B is the actual answer. I made a note to keep checking
-whether whatever I build depends on something that only exists in A.
-
-Also noted from the brief: they say judgement matters more than technical sophistication,
-and that proposals built on optimistic assumptions won't score well. So being honest about
-what I *can't* tell from the logs is part of the work, not an excuse.
-
-### Reading the data spec
-
-The schema doc is quite detailed, and it flags its own problems, which I appreciated:
-
-- Chunks are just recording buckets. They have nothing to do with where a process starts
-  or ends, so I shouldn't use them as boundaries.
-- `text_input_complete` is unreliable — some entries missing content, some events that
-  aren't text input at all.
-- `gt.jsonl` sometimes emits the same `process_started` twice, and `process_switched_out`
-  doesn't always pair up. It literally says "verify consistency yourself before relying on
-  it."
-
-That last one is a warning about my own evaluation data, which is a bit alarming. If the
-ground truth has holes then my accuracy numbers are measuring something fuzzy. I put it on
-the list to check properly before I trust any score.
-
-I also noticed `extracted_text` is only on about 4% of events, and everything is in
-Japanese — screen text, process names, window titles. I'll need to translate as I go.
-
-### Looking at the folders
-
-Unzipped both datasets and just looked at the shape of them. A is 63 sessions, B is 15.
-Together about 4.4 GB, mostly screenshots. One `events.jsonl` file opened in an editor was
-already unreadable — a single event is a huge JSON object with window lists and screen
-text embedded. So I'm definitely doing all of this with scripts, not by eye.
-
-### Setting up the repo
-
-Made the git repo and did a first commit with the two provided documents plus a
-`.gitignore`.
-
-Decisions I made now so I don't have to think about them later:
-
-- **The datasets do not go in the repo.** 4.4 GB of data the evaluators already have.
-  Git-ignored, and I'll note in the README where they need to sit for the scripts to run.
-- **Anything derived goes in `build/` and is also ignored.** I know I'll end up caching a
-  processed version of the events, and that shouldn't be committed either.
-- **Code in `src/`, results in `reports/`.** Keeping the reviewable outputs separate from
-  the throwaway cache, so someone can read my numbers without running anything.
-
-The brief says they review the git history, so I want to commit as I go rather than
-dumping everything at the end.
-
-### AI usage today
-
-Only for translation — I ran the Japanese process names in the schema doc
-(`住民税通知確認` and so on) through Claude to get a rough sense of what kind of work
-these are. No code, no analysis yet.
-
-### Rough plan for the week
-
-Day 2 for understanding the data and Step 1, since everything depends on it. Day 3–4 for
-Step 2 analysis and picking an automation target. Day 5–6 to build the Step 3 prototype.
-Day 7 for the report. I expect this to slip — Step 1 looks harder than one day — but I'd
-rather leave slack at the end than discover I have no working prototype.
+A short record of what I was thinking, what I tried, what did not work, and the decisions I made during the project.
 
 ---
 
-## Day 2 — Understanding the data, and Step 1
+## Day 1 — 2026-09-14
+### Reading the brief and setting up
 
-### Morning: I decided not to write any code for the segmenter yet
+### What I was thinking
 
-My first instinct was to jump straight into something like change-point detection or
-clustering the events. I stopped myself, because of one line in the brief: dataset B has
-different departments and different applications. If I built something on dataset A
-without checking what actually carries over, I could end up with a method that scores
-great on A and produces nothing on B. So I spent the first part of the day just measuring.
+The first day was mainly about understanding the task before touching the data.
 
-That turned out to be the right call, and here is why.
+The main thing I realised was that **Step 1 is a foundation rather than just another deliverable**. If the process boundaries are wrong, then the process frequencies and time estimates in Step 2 can also be wrong, which could eventually lead to choosing the wrong automation target.
 
-**The portal is the key.** All three business systems are the same web app served on
-three different local ports (A uses 5122/5123/5124, B uses 5132/5133/5134), and each one
-has the same five screens. When I cross-checked `(port, screen)` against dataset A's
-ground truth, it lined up 1:1 with the 15 process codes. So the process identity is
-basically written in the URL — I don't have to infer it.
+I also kept coming back to the point in the brief that **Dataset A should not simply be assumed to transfer to Dataset B**. I wanted this to influence the way I approached the project from the beginning.
 
-**But the case IDs don't carry over.** In dataset A the table rows have the case ID inside
-the HTML id, like `#la-row-SUP-181750-001`. I got excited about this because it would make
-segmentation trivial. Then I checked dataset B: the rows are just
-`tr:nth-of-type(4)` — position only, zero case IDs in the whole dataset. A's buttons are
-also named things like `-confirm` and `-approve`, while B collapsed everything to `-ok`.
+### What I did
 
-If I had skipped this check I would have built the whole thing on case IDs and only found
-out at the very end. This is the moment that justified the whole morning.
+- Read the project brief and understood the three main steps.
+- Read `DATA_SCHEMA.md` and noted the warnings about the data and ground truth.
+- Looked through the dataset structure: 63 sessions in Dataset A and 15 in Dataset B.
+- Found that the data is large (~4.4 GB), and one `events.jsonl` was already difficult to inspect directly in an editor, so I decided to use scripts for data exploration from the start.
+- Set up the Git repository and made the initial commit.
+- Decided to keep the raw datasets out of Git, generated/intermediate files in `build/`, code in `src/`, and results in `reports/`.
 
-**Some data problems I hit while poking around:**
+### What I deliberately did not do
 
-- `context.active_app` lies. It's stale about 38% of the time on app switches — it tells
-  you the app you just left, not the one you're in. I trusted it at first and got weird
-  results (Excel's Ctrl+F showing up as Chrome, 1,293 times). Had to rebuild the "current
-  app" from the app_switch payload instead.
-- 88% of app_switch events are switches from an app to *itself*. So you can't use the
-  count of app switches as a measure of task switching.
-- Events are not in timestamp order in the files. I sort everything now.
-- Clipboard text and form input values are 100% null (redacted). I spent a while looking
-  for the text before accepting it just isn't there.
-- 7 of A's 63 sessions have no browser extension data at all. This became my main problem
-  for the rest of the day.
+I did not start building the segmentation algorithm on Day 1.
 
-### Ground truth needed fixing before I could use it
+The data specification itself says that the ground truth should be verified, so I did not want to treat `gt.jsonl` as unquestionable simply because it was provided for evaluation.
 
-`gt_manifest.json` has `end_ts: null` on 257 of the 2,009 executions — that's 12.8% of my
-reference data missing. I didn't want to just throw those away, so I rebuilt the intervals
-from the `gt.jsonl` event stream instead.
+I also did not choose an automation target yet. I wanted that decision to come from Dataset B rather than from an interesting-looking process I happened to notice early.
 
-While doing this I figured out something that had confused me. The schema doc warns that
-`process_started` sometimes appears twice in a row and calls it a quirk. But 1,819 starts
-minus 1,590 switch-outs = 229, and there are 230 duplicates. They match. So a "duplicate
-start" isn't a bug at all — it's just how the log records doing the same process twice in
-a row. Good thing I checked, because I almost wrote code to delete them.
+### AI usage
 
-My rebuilt version matches all 1,752 intervals the manifest does give, to the millisecond,
-and recovers the 257 missing ones.
+I used AI only for translating the Japanese process names so that I could understand the data better.
 
-### Afternoon: building the segmenter
+### Rough plan
 
-The idea I settled on is simple enough to explain in one sentence: **each case starts when
-the worker clicks a row in the worklist and ends when they click the action button, and
-everything in between (Excel, Word, Notepad) belongs to that case.**
+My initial plan was:
 
-Getting there took a few wrong turns.
+- **Day 1:** understand the brief, data, and setup
+- **Day 2:** Step 1 segmentation
+- **Days 3–4:** Step 2 process and ROI analysis
+- **Days 5–6:** build the automation prototype
+- **Day 7:** testing and final report
 
-**Wrong turn 1: I blamed my method for a bad metric.** My first boundary F1 was 0.527 and
-I assumed the method was just mediocre. It wasn't. The ground truth writes
-"switched out of A" and "started B" about 3 milliseconds apart, so it looks like two
-boundaries when it's really one handover. Any method that emits one boundary per switch
-is capped around 0.56 recall no matter how good it is. Once I merged those pairs in the
-scoring code, the same segmenter scored 0.825. I was measuring the file format, not my
-work.
+I expected this plan to change once I started working with the actual data.
 
-**Wrong turn 2: I assumed the gap between two cases gets split down the middle.** It
-doesn't. I measured it and found that 1,844 out of 1,946 consecutive executions in the
-ground truth touch each other almost exactly — there is basically no gap. And the long
-pauses aren't *between* cases, they're *inside* them, after the button click. So the rule
-should be: a small margin before the row click, and then the case keeps the dead time
-after it until the next one starts. That change alone took mean IoU from 0.76 to 0.80.
+### End-of-day decision
 
-**Wrong turn 3 (the big one): the sessions with no browser extension.** For those 7
-sessions I tried counting round trips (portal → Excel → portal) as cases. It recovered
-11.6% of them. Basically useless, so I deleted it.
+The main decision from Day 1 was:
 
-Then I looked closer and realised the actual problem was worse than I thought: when the
-extension is missing you don't just lose the clicks, you lose the browser URL too. So my
-context resolution was at literally 0% for those sessions and they produced **zero**
-segments. That's 11% of dataset A and 1 session in dataset B.
+> **Measure first, then build.**
 
-The fix took me a while but I like it. The window title still tells you which system
-(`財務会計システム` etc.), and about 4% of events have OCR text containing the page
-breadcrumb (`ダッシュボード / 発注管理`) which tells you the screen. I learn the
-"screen name → screen" mapping automatically from the sessions where both the URL and the
-breadcrumb are visible, then apply it where the URL is gone. Nice side effect: the same
-mechanism is what discovers dataset B's process names, so one thing solved two problems.
+---
 
-**Wrong turn 4: my replacement fallback only worked on A.** For the extension-less
-sessions I found that the row click still shows up as a plain mouse click with the browser
-in front. Rule: take the last browser click before the worker leaves the browser. Works on
-A (fires once per case 74% of the time). Then I ran it on B's extension-less session and
-got 19 segments when similar sessions have ~45.
+## Day 2 — Understanding the event stream and building Step 1
 
-The reason is that A and B just work differently. In A the worker leaves the browser
-constantly to check Excel. In B they mostly stay in the browser. So I had to add a second
-rule (the click right after pasting into the note field) and pick between the two per
-session, based on how often that session leaves the browser. I tried just using both rules
-together first, but that double-counts 58 of A's cases. The threshold I use has a fairly
-narrow margin (A sessions measure 0.96–2.21, B measures 0.43), so I wrote it down as an
-assumption rather than pretending it's solid.
+### What I was thinking
 
-**Two silly bugs** that I only caught because a number looked impossible: my coverage
-metric reported 143% (broken interval union), and at one point every segment in the
-sessions I had *just fixed* disappeared, because a divide-by-something-tiny made all the
-margins zero.
+Today I wanted to answer one question before building too much:
 
-### Things I decided not to do
+> **What does one actual process execution look like in the raw event stream?**
 
-- **No machine learning.** Not because it's bad, but because the simple thing already gets
-  ARI 0.993 against the ground truth labels. Anything learned would have to beat that and
-  would be much harder to explain to a client.
-- **No classifier trained on A's process names.** B has different processes, so it would
-  be useless there.
-- **I stopped tuning the boundaries.** I checked what a perfect method could do: even if
-  you place every boundary at the exactly correct average offset, you only get 67% within
-  1 second, because the click itself varies by about ±0.8s. So chasing 1-second accuracy
-  is just fitting noise. I said so in the report instead of hiding it.
-- **One improvement I skipped on purpose:** I could learn the nav menu click coordinates
-  to recover the screen better in extension-less sessions. It would help, but it affects
-  1 session out of 15 in B — maybe 2% of the output. Not worth a day-1 afternoon.
+Since Step 1 affects everything that follows, I wanted to understand which signals were actually reliable instead of immediately choosing a complicated segmentation method.
 
-### Two things I couldn't solve
+### What I found first
 
-**The biggest one:** dataset B's busiest screen (`hr_expense_and_pay_change`, 134
-segments) is actually hosting *two* different processes — expense claims (`P1-...`) and
-salary changes (`P4-...`) are mixed in the same worklist. I can see this in the OCR text.
-But the code that would tell me which is which only appears in 5 of my 684 segments, and
-B's rows are positional so there's no way to join them. I left it as one label and wrote
-it up as my main known defect. I'd rather say "I couldn't separate these" than guess.
+I profiled the event stream and found several data-quality issues that directly affected the implementation:
 
-**Something I chose to ignore:** my merge test says two obviously different processes
-(HR expense handling and Ops inventory) are 99% similar. They're not — that's just because
-every screen in this portal is used the same way (click row, paste, press OK). The metric
-was measuring UI style, not business purpose. So I ignored it and explained why. It felt
-strange to override my own analysis, but following it would have been clearly wrong.
+- Events are not always stored in timestamp order, so I sorted them by timestamp before doing time-based analysis.
+- `context.active_app` can be stale, so I used the actual application-switch information instead.
+- Clipboard and browser form-input text are essentially unavailable, so I could not depend on the text entered by the user.
+- Some sessions have very little browser-level information, so I needed a fallback rather than simply dropping them.
+- Screenshots are incomplete, so I did not make the segmentation method dependent on them.
+
+I also checked the ground truth before using it for evaluation. There were missing end times and duplicate start events, so I reconstructed the reference intervals from the ground-truth event stream rather than blindly trusting the provided manifest.
+
+### What I tried
+
+I started with relatively simple segmentation ideas:
+
+- time gaps
+- application changes
+- browser activity
+- fixed/interpolated boundaries
+- timing combined with application/process context
+
+These were useful as baselines, but they did not handle the actual behaviour well enough.
+
+### What did not work
+
+My first assumption was that a period of inactivity would usually mean that one process had ended.
+
+That turned out to be too simplistic.
+
+Some quiet periods occurred **inside** an execution, while consecutive executions could occur almost immediately after one another. Application switching also did not necessarily mean that the business process had changed.
+
+I also initially focused too much on getting an exact boundary timestamp. The event timing itself has some jitter, so optimising very small boundary differences was not particularly useful.
+
+### What changed my approach
+
+The strongest signal in Dataset A turned out to be the **business application/portal context**. The combination of portal and route information gave a very strong indication of which process was being performed.
+
+This was much more reliable than trying to infer the process entirely from mouse and keyboard activity.
+
+At the same time, I checked what would transfer to Dataset B. Dataset A has useful case IDs and semantic button names that are not available in the same form in B. I therefore avoided making those signals essential to the solution.
+
+### The main segmentation insight
+
+The important question became not just:
+
+> "Where is the next process?"
+
+but:
+
+> **"Which process should own the inactive time between two pieces of activity?"**
+
+When I compared the predicted segments with the ground truth, I found that most consecutive executions were very close together, while some longer quiet periods were actually inside an execution.
+
+This led me towards a **tight start + trailing absorption** approach: keep the beginning of an execution relatively tight, while allowing the process containing the final committing action to absorb trailing inactive time when the surrounding context supports it.
+
+This gave a much better match than simply splitting the timeline at inactivity gaps.
+
+### Handling weaker sessions
+
+Some sessions had no useful browser extension information.
+
+I first tried using browser -> Excel/Notepad -> browser excursions as a fallback for identifying case executions. This performed poorly, so I removed that approach.
+
+Looking more closely at the affected sessions showed that the browser context itself was also missing. I therefore added another context channel using:
+
+- window titles
+- OCR breadcrumbs
+- screen/route information learned from sessions where URL and screen information were both available
+
+This gave the fallback a more meaningful signal instead of trying to infer a process only from application movement.
+
+### Dataset B check
+
+While checking B, I found that the largest process group appears to contain two different business objectives. I looked for a reliable signal to split them, but the available information was not sufficient to make that split confidently.
+
+I decided **not to guess**. I kept the group together and documented it as a limitation rather than creating labels that I could not justify.
+
+### Other checks
+
+I also tested whether sequence similarity/clustering should be used to merge or split processes.
+
+One similarity test gave very high similarity between two processes that were clearly different business workflows. The common pattern was mainly a shared interaction sequence such as clicking a row, pasting information, and confirming.
+
+This showed me that behavioural similarity alone could produce misleading process merges, so I did not use it to redefine the labels.
+
+### Final decisions for Step 1
+
+- **No machine learning.** The portal context was already a very strong process signal, so adding ML would increase complexity without a clear benefit.
+- **No supervised classifier trained on Dataset A labels.** Dataset B contains different processes, so I did not want to build something that depended on A's labels.
+- Use relative timing rather than fixed absolute margins so the approach is more portable between datasets with different execution speeds.
+- Keep a degraded fallback path for sessions with missing browser information rather than losing those sessions completely.
+- Stop chasing extremely small boundary differences because the underlying event timing itself has noticeable jitter.
+- Do not split processes unless there is enough evidence that they represent genuinely different workflows.
 
 ### Where the day went
 
-Roughly: 40% measuring the data before writing anything, 35% building and rebuilding the
-segmenter, 15% just on the no-extension sessions, 10% on validation and writing up.
+Roughly:
 
-The 40% at the start felt slow at the time but it's what found the port/screen structure
-and caught the case-ID trap.
+- **40%** — measuring and understanding the data
+- **35%** — building and improving the segmenter
+- **15%** — handling extension-less/degraded sessions
+- **10%** — validation and documentation
 
-### How I used AI
+The initial data investigation took a significant part of the day, but it prevented me from building around signals that only existed in Dataset A.
 
-I used Claude Code (Opus 5) throughout the day, mostly as a way to ask the data questions
-quickly. When I wondered "who owns the gap between two cases?", I could turn that into an
-actual measurement in a couple of minutes instead of just assuming an answer. It also
-wrote most of the scripts to my direction, and helped me read the Japanese screen text and
-window titles to work out what the business processes actually are.
+### AI usage
 
-Two things I was careful about. First, every number in my report comes from a script in
-`src/` that can be re-run — not from the model's memory. Second, it was wrong a few times
-(the round-trip fallback, the boundary metric), and what caught it every time was the
-measurement, not me reading the reasoning and spotting the flaw. So I tried to check
-things by running them rather than by nodding along.
+Claude Code was used as an implementation and analysis assistant for diagnostic scripts, data processing, debugging, and interpretation of Japanese screen text and window titles.
 
-### Result and what's next
+I made the engineering decisions based on the observed data and validation results rather than accepting model suggestions without checking them.
 
-684 segments across all 15 dataset-B sessions, 12 processes. On dataset A: boundary F1
-0.858 at 2 seconds, mean IoU 0.865, and the 15 process labels come out matching the ground
-truth codes almost perfectly (ARI 0.912). I held out 21 sessions from tuning and they
-scored *better* than the 42 I tuned on, so I don't think I've overfitted.
+### End-of-day decision
 
-Step 1 took the whole day as expected, so I'm on plan. Tomorrow is Step 2: process
-frequencies, cycle times, how many people do each one, and then a prioritised list of
-automation candidates. Before that I want one more attempt at the P1/P4 split, because
-it's the biggest label and the ROI ranking will depend on it.
+I had a working direction for Step 1 and, more importantly, a clearer understanding of **which signals were reliable and which were misleading**.
+
+The next step is to use the resulting segments to understand Dataset B: which processes occur, how often they occur, how much time they consume, who performs them, and which ones are actually worth automating.
+
+---
