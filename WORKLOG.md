@@ -4,7 +4,90 @@ My notes for each day: what I was thinking, what I tried, and what didn't work.
 
 ---
 
-## Day 1 — Understanding the data, and Step 1
+## Day 1 — Reading the brief, and setting up
+
+No analysis today. I just wanted to understand what is actually being asked before
+touching the data.
+
+### Reading the task
+
+I read `README.md` (now `docs/TASK.md`) and `DATA_SCHEMA.md` a couple of times. A few
+things stood out.
+
+The three steps build on each other — recover the units of work, analyse them to find
+automation candidates, then build one. So Step 1 isn't really the deliverable, it's the
+foundation for the other two. If my segments are wrong, the ROI ranking in Step 2 is wrong
+too, and then I'd be building the wrong tool in Step 3. That made me want to spend real
+effort on Step 1 rather than rushing it.
+
+The line I kept coming back to: *"An approach that works well on Dataset A will not
+necessarily transfer to Dataset B."* Dataset A has ground truth and B doesn't, so the
+temptation is to tune hard on A. But B is the actual answer. I made a note to keep checking
+whether whatever I build depends on something that only exists in A.
+
+Also noted from the brief: they say judgement matters more than technical sophistication,
+and that proposals built on optimistic assumptions won't score well. So being honest about
+what I *can't* tell from the logs is part of the work, not an excuse.
+
+### Reading the data spec
+
+The schema doc is quite detailed, and it flags its own problems, which I appreciated:
+
+- Chunks are just recording buckets. They have nothing to do with where a process starts
+  or ends, so I shouldn't use them as boundaries.
+- `text_input_complete` is unreliable — some entries missing content, some events that
+  aren't text input at all.
+- `gt.jsonl` sometimes emits the same `process_started` twice, and `process_switched_out`
+  doesn't always pair up. It literally says "verify consistency yourself before relying on
+  it."
+
+That last one is a warning about my own evaluation data, which is a bit alarming. If the
+ground truth has holes then my accuracy numbers are measuring something fuzzy. I put it on
+the list to check properly before I trust any score.
+
+I also noticed `extracted_text` is only on about 4% of events, and everything is in
+Japanese — screen text, process names, window titles. I'll need to translate as I go.
+
+### Looking at the folders
+
+Unzipped both datasets and just looked at the shape of them. A is 63 sessions, B is 15.
+Together about 4.4 GB, mostly screenshots. One `events.jsonl` file opened in an editor was
+already unreadable — a single event is a huge JSON object with window lists and screen
+text embedded. So I'm definitely doing all of this with scripts, not by eye.
+
+### Setting up the repo
+
+Made the git repo and did a first commit with the two provided documents plus a
+`.gitignore`.
+
+Decisions I made now so I don't have to think about them later:
+
+- **The datasets do not go in the repo.** 4.4 GB of data the evaluators already have.
+  Git-ignored, and I'll note in the README where they need to sit for the scripts to run.
+- **Anything derived goes in `build/` and is also ignored.** I know I'll end up caching a
+  processed version of the events, and that shouldn't be committed either.
+- **Code in `src/`, results in `reports/`.** Keeping the reviewable outputs separate from
+  the throwaway cache, so someone can read my numbers without running anything.
+
+The brief says they review the git history, so I want to commit as I go rather than
+dumping everything at the end.
+
+### AI usage today
+
+Only for translation — I ran the Japanese process names in the schema doc
+(`住民税通知確認` and so on) through Claude to get a rough sense of what kind of work
+these are. No code, no analysis yet.
+
+### Rough plan for the week
+
+Day 2 for understanding the data and Step 1, since everything depends on it. Day 3–4 for
+Step 2 analysis and picking an automation target. Day 5–6 to build the Step 3 prototype.
+Day 7 for the report. I expect this to slip — Step 1 looks harder than one day — but I'd
+rather leave slack at the end than discover I have no working prototype.
+
+---
+
+## Day 2 — Understanding the data, and Step 1
 
 ### Morning: I decided not to write any code for the segmenter yet
 
@@ -177,6 +260,7 @@ things by running them rather than by nodding along.
 truth codes almost perfectly (ARI 0.912). I held out 21 sessions from tuning and they
 scored *better* than the 42 I tuned on, so I don't think I've overfitted.
 
-Tomorrow: Step 2. Process frequencies, cycle times, how many people do each one, and then
-a prioritised list of automation candidates. Before that I want to have one more attempt
-at the P1/P4 split, because it's the biggest label and the ROI ranking will depend on it.
+Step 1 took the whole day as expected, so I'm on plan. Tomorrow is Step 2: process
+frequencies, cycle times, how many people do each one, and then a prioritised list of
+automation candidates. Before that I want one more attempt at the P1/P4 split, because
+it's the biggest label and the ROI ranking will depend on it.
