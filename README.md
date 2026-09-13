@@ -1,8 +1,8 @@
-# Name - Shah Aanchal Sachinkumar
-# University - Indian Institute of Technology, Kharagpur 
-# Department - Aerospace Engineering
-# Personal Email ID - aanchalshah2007@gmail.com
-# Institute Email ID - aanchalshah2007.24@kgpian.iitkgp.ac.in
+## Name - Shah Aanchal Sachinkumar
+## University - Indian Institute of Technology, Kharagpur 
+## Department - Aerospace Engineering
+## Personal Email ID - aanchalshah2007@gmail.com
+## Institute Email ID - aanchalshah2007.24@kgpian.iitkgp.ac.in
 
 # Operation logs → automation proposal
 
