@@ -22,7 +22,7 @@ unmodified.
 | Step | State | Output |
 |---|---|---|
 | **1 — Recover units of work** | **Complete** | [`segments.jsonl`](segments.jsonl) · [report](reports/step1_segmentation_report.md) |
-| 2 — Analyse and prioritise automation candidates | Not started | — |
+| **2 — Analyse and prioritise automation candidates** | **Complete** | [report](reports/step2_analysis.md) · [metrics table](reports/step2_process_metrics.csv) |
 | 3 — Build the automation tool | Not started | — |
 
 **Step 1 headline.** 684 segments across all 15 dataset-B sessions, 12 discovered
@@ -31,6 +31,18 @@ tolerance, mean temporal IoU 0.865, 91.0% of executions matched at IoU ≥ 0.5, 
 process labels recovered with no supervision (ARI 0.912 overall, 0.993 on the 56 of 63
 sessions where the browser extension was connected). A 21-session holdout scores better
 than the 42-session dev split it was tuned on.
+
+**Step 2 headline.** Twelve processes measured on 37 quantities each, scored on two
+deliberately separate axes: `Client_ROI = Impact x Automatability x Client_Feasibility`
+(the ranking) and `Build_Fit` (whether a convincing prototype fits in the days left — a
+fact about my week, not the client's business, so it never enters the ranking).
+**`fin_purchase_order_management` (発注管理) ranks first, and stays first in all three
+robustness re-runs** — with the conflated `hr_expense_and_pay_change` label split 50/50,
+with the extension-less session dropped, and with thin OCR evidence discarded — by a
+margin of 1.4x-2.2x. It is also the second most buildable process in the set, so it is
+the Step-3 target with nothing deferred to get there. The volume leader (134 cases, 26.5
+of 163 segmented minutes) places second: it writes to payroll and tax withholding, and
+step 1 established it is two business objectives sharing one worklist.
 
 ---
 
@@ -47,6 +59,9 @@ docs/
 
 reports/
   step1_segmentation_report.md        method, validation, failure cases, limitations
+  step2_analysis.md                   STEP 2 REPORT - process analysis + ranking
+  step2_process_metrics.csv           per-process metrics and every scoring factor
+  step2_metrics.json                  the same, machine-readable, + robustness re-runs
   validation_A.json                   every dataset-A metric, machine-readable
   tuned_constants.json                the four fitted constants, sweep vs shipped
   discovery_B.json                    dataset-B process discovery + split/merge tests
@@ -65,6 +80,9 @@ src/
   tune.py            parameter sweep with a held-out split   -> reports/
   discover_b.py      dataset-B process discovery             -> reports/
   run_b.py           produce segments.jsonl
+
+  roi.py             STEP 2 scoring model: Client_ROI and Build_Fit
+  rank_b.py          STEP 2 measurement + ranking              -> reports/
   qa_segments.py     14 output checks; exits non-zero on failure
   run_eval_a.py      quick dataset-A scoreboard
 
@@ -98,6 +116,7 @@ cd src
 python3 validate_a.py     # dataset A: metrics, ablations, label/GT contingency
 python3 run_b.py          # writes ../segments.jsonl
 python3 qa_segments.py     # 14 checks on the deliverable
+python3 rank_b.py         # step 2: metrics + ranking -> ../reports/
 
 python3 tune.py           # optional: re-run the parameter sweep
 python3 discover_b.py     # optional: re-run process discovery on B

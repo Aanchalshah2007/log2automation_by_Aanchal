@@ -194,3 +194,88 @@ I had a working direction for Step 1 and, more importantly, a clearer understand
 The next step is to use the resulting segments to understand Dataset B: which processes occur, how often they occur, how much time they consume, who performs them, and which ones are actually worth automating.
 
 ---
+
+## Day 3 - 2026-09-15
+### Measuring dataset B and building the ranking
+
+
+The key question was:
+
+> **What would make an automation ranking wrong, and can I measure my way out of it?**
+
+I started by separating the problem into **two scores**: `Client_ROI`, which answers the client's question, and `Build_Fit`, which captures my implementation constraints. I deliberately kept them separate so I would not recommend something simply because it was easier to build.
+
+### What the Data Changed
+
+The obvious impact formula was:
+
+**frequency × duration × people affected**
+
+However, the operator term did not hold up. The four recording machines covered almost all processes, but this reflected how the data was captured rather than how the work was actually staffed. I therefore reported operator count separately and excluded it from the score.
+
+The most important distinction was inside the Word-document time. Some documents were **規定 / 手続き** (regulations or procedures requiring judgment), while `getsujitsu_teigaku_torihikisaki_ichiran` was a fixed monthly **list** that could be treated as lookup data.
+
+Separating these changed the judgment factor for `fin_invoice_approval` from about **0.19 to 0.03**. Unknown document types were kept separate rather than guessed into either category.
+
+I also found that measuring integrations as a union across all cases made almost every process look like a 10-way integration. Requiring a surface to recur in at least **10% of cases** fixed this and changed the top ranking.
+
+I separately corrected a duration inflation caused by using an extended timestamp window for both event attachment and duration measurement.
+
+### Robustness
+
+There was one unresolved issue from Step 1: `hr_expense_and_pay_change` may actually contain two processes.
+
+New OCR evidence showed a clean **12/12 split** between P1 and P4 rows, so I tested the worst-case 50/50 split rather than guessing.
+
+I then reran the ranking under three different conditions, including:
+
+- Splitting the conflated label 50/50
+- Removing the degraded session
+- Discarding thin worklist evidence
+
+**The same process remained the recommendation in all four views**, with margins of **1.4×–2.2×**.
+
+Removing the lowest-confidence session actually widened the winner's margin.
+
+### Recommendation
+
+The recommended target is:
+
+**`fin_purchase_order_management` (発注管理)**
+
+It has the highest `Client_ROI` and the second-highest `Build_Fit`, making it the right Step-3 target without sacrificing the client's objective.
+
+The volume leader came second despite having **1.7× as many cases**.
+
+This reinforces the central point:
+
+> **Being the biggest pile of work is not the same as being the best thing to automate.**
+
+`hr_attendance_leave_request` was the easiest process to build, with a `Build_Fit` of **0.97**, but its `Client_ROI` was only one-third of the winner's. I therefore deliberately did not choose it.
+
+### Where the Day Went
+
+Roughly:
+
+- **45%** — Measuring Dataset B: dwell timelines, clipboard character counts, document classification, variant channels, and selector/route inventory
+- **20%** — Designing the scoring model and challenging the operator term
+- **20%** — Robustness re-runs and investigating the conflated process evidence
+- **15%** — Writing the report and verifying every number against the generated CSV
+
+The verification pass was worth the time: it caught **two stale figures** and the table corruption before the final result.
+
+### AI Usage
+
+Claude Code was used as an implementation and analysis assistant for the measurement passes over the event cache, scoring module, robustness re-runs, and interpretation of Japanese screen text and document names.
+
+The key judgments remained mine:
+
+- Dropping the operator term
+- Separating 規定 from 一覧
+- Keeping `Client_ROI` and `Build_Fit` separate
+- Including the governance sensitivity table
+- Refusing to hide the positional-selector risk inside a scoring factor
+
+The sensitivity table is the only unmeasured input in the model, so I kept it in one block in `roi.py`, allowing a reviewer to change the assumption and immediately re-rank the processes.
+
+
