@@ -181,7 +181,8 @@ by operator count, for the reason in §2.3.
   `clipboard_change.text_length` is populated on all 872 of B's clipboard events (median
   42 chars), so this is a real character count, not a proxy. **[I]** Content that was
   pasted came from somewhere a program can also read. Content that was typed came out of
-  a person's head. Range 0.56–0.96.
+  a person's head. Range 0.56–0.96. **[O] *Where* it was read from is measurable too, and
+  it decides how much integration a build needs — §3.1.**
 - **`variant_rate`** **[O]** — §2.4.
 - **`judgment_step`** **[O]** — the share of the case cycle spent inside a **regulation**
   document. **[O]** B's Word documents split cleanly in two: 規定 / 手続き / checklist
@@ -193,6 +194,54 @@ by operator count, for the reason in §2.3.
   `fin_invoice_approval` (0.54 s of regulation, 2.35 s of table lookup per case → judgment
   0.03) from `fin_payment_processing` (7.62 s of regulation → judgment 0.38), and the two
   would be indistinguishable if Word dwell were counted as one number.
+
+### 3.1 Where the pasted content comes from
+
+`copy_paste_ratio` says how much of a case arrives through the clipboard. It does not say
+where the clipboard was filled from, and those are different feasibility questions: content
+copied from the portal is in the DOM, content copied from a Word document is in a file
+somebody has to parse.
+
+**[O] Method.** `clipboard_change` fires at the *copy*, so the application in the
+foreground at that instant is the surface the content was copied **out of**. 865 of B's
+872 clipboard events fall inside a segmented case. Two channels read the source app: the
+foreground timeline (primary) and `context.active_app` (cross-check). They agree on 87.6%
+of the 865, and the disagreement is **one-directional** — `context.active_app` reads Edge
+where the timeline has already moved to Notepad, which is exactly the one-step lag step 1
+documented in `common.py`. **[A] The table below therefore uses the timeline, the
+conservative channel**; the `paste_source_in_portal_ctx` column in the metrics table
+carries the more generous ctx reading beside it — never lower than this one, and higher
+for the seven processes where the operator moves between the portal and the note pad.
+
+| # | Process | Clipboard events | From the portal | From the note pad | **From a document** |
+|---:|---|---:|---:|---:|---:|
+| 1 | `fin_purchase_order_management` | 76 | 0.95 | 0.05 | **0.00** |
+| 2 | `hr_expense_and_pay_change` | 172 | 0.65 | 0.35 | **0.00** |
+| 3 | `hr_attendance_leave_request` | 55 | 0.93 | 0.07 | **0.00** |
+| 4 | `ops_inventory_management` | 103 | 0.51 | 0.48 | **0.00** |
+| 5 | `fin_invoice_approval` | 76 | 0.93 | 0.01 | **0.04** |
+| 6 | `ops_contract_management` | 86 | 0.67 | 0.01 | **0.31** |
+| 7 | `ops_it_access_request` | 55 | 0.55 | 0.38 | **0.00** |
+| 8 | `hr_benefits_application` | 38 | 0.92 | 0.00 | **0.05** |
+| 9 | `hr_onboarding` | 91 | 0.69 | 0.00 | **0.31** |
+| 10 | `fin_budget_variance_analysis` | 8 | 1.00 | 0.00 | **0.00** |
+| 11 | `fin_payment_processing` | 58 | 0.62 | 0.00 | **0.38** |
+| 12 | `fin_manager_expense_approval` | 47 | 0.68 | 0.00 | **0.32** |
+
+**[O] The finding.** Document-sourced clipboard content is **0.00 for the top-ranked
+process** — all 76 of its copies come from the portal (72) or the note pad (4), none from
+Word or Excel — and **0.31–0.38 for `fin_payment_processing`, `fin_manager_expense_approval`,
+`ops_contract_management` and `hr_onboarding`**, which are precisely the four processes §7
+defers as judgment-heavy. **[I]** The two properties are the same structure seen from two
+sides: a case whose handling depends on a 規定 is a case whose text is copied out of that
+規定. Nothing was fitted to produce that agreement — `judgment_step` is a dwell measurement
+and this is a clipboard count, and they land on the same four processes.
+
+**[I]** Note what the note-pad column is not. A high scratch share
+(`ops_inventory_management` 0.48, `hr_expense_and_pay_change` 0.35) is not an integration
+cost: the note pad holds no business data of its own, it is a staging area for text that
+came from the portal a moment earlier, and it is already counted as a mockable surface in
+`mock_fidelity`. The column that costs a build is the last one.
 
 ### Client_Feasibility = `structured_target × stable_selectors × low_branching × (1 − sensitivity)`
 
@@ -336,7 +385,7 @@ expense half at 0.45 **[A]**, since only one of them touches payroll.
 | Base (as one process) | `fin_purchase_order_management` 0.166 | `hr_expense_and_pay_change` 0.090 | 1.8× |
 | Conflated label split 50/50 | `fin_purchase_order_management` 0.207 | `hr_attendance_leave_request` 0.094 | 2.2× |
 | Extension-less session removed | `fin_purchase_order_management` 0.207 | `hr_expense_and_pay_change` 0.122 | 1.7× |
-| Thin worklist 種別 evidence dropped | `fin_purchase_order_management` 0.183 | `hr_attendance_leave_request` 0.129 | 1.4× |
+| Thin worklist 種別 evidence dropped | `fin_purchase_order_management` 0.184 | `hr_attendance_leave_request` 0.129 | 1.4× |
 
 **[I] The recommendation is the same process in all four views, and the conflated label
 never reaches first place in any of them.** Splitting it only lowers it further (the two
@@ -408,6 +457,15 @@ that skips it is not hiding the hard part — there is no hard part hidden there
 exercises the complete row → note → paste → commit loop end to end, which is the loop all
 twelve processes share.
 
+**[O] Its whole input surface is inside the DOM.** Every one of its 76 clipboard events
+was copied from the portal (72) or from the note pad (4); **none from Word, Excel or any
+file** (§3.1). **[I]** That is a build-cost statement, not a restatement of the ranking:
+the tool needs no document parser, no file-open dialog, no Excel reader and no OCR
+fallback — it reads the row out of the DOM and writes the note back into the DOM. Every
+integration this project does *not* have to build is one that cannot break in front of
+the client, and it is why 発注管理 is cheaper to build than its Build_Fit of 0.80 alone
+suggests.
+
 **[I] Scope: a shared foundation plus one process definition, not a single-purpose
 script.** **[O]** All twelve processes are worked through one DOM contract with five
 selector prefixes. **[I]** A tool that hard-codes `#rt-note` and `#btn-rt-ok` throws away
@@ -435,13 +493,78 @@ the cheapest second definition to add — same `la` prefix family, zero new inte
   it, and either would misrepresent what the tool does. The honest form for these is
   assistive — surface the right clause and pre-fill the note, leave the decision and the
   commit to the operator — which is a different product and a different conversation with
-  the client.
+  the client. **[O] An independent second reason, measured rather than argued:** 31–38% of
+  the clipboard content in these four is copied **out of Word** (§3.1), against 0% for the
+  recommended target. So even setting the judgment question aside, each of them needs a
+  document reader the recommended build does not — a second integration on top of a
+  decision the tool should not be making.
 - **`fin_invoice_approval`** (Impact 0.78, 3rd highest) — the interesting one. Its Word
   time is a *table* lookup (2.35 s in 月次定額取引先一覧) rather than a policy read (0.54 s),
   so unlike the four above it is not blocked on judgment. It is held back by approval
   authority over spend (sensitivity 0.50) and by a three-way integration surface
   (the vendor list, `expense_calc` in Excel, and a file-open dialog). **[I]** Best candidate for the second wave once the foundation exists and the
   approval question has been answered by the client rather than by me.
+
+---
+
+## 7.5 What it would take to build this, and what would bite
+
+**[O] Every one of the 684 observed cases is a happy path.** Four places a failed case
+would have to leave a trace were checked, and all four are empty. The fifth row is in the
+table because it is the one that is *not* empty:
+
+| Where a failed case would have to show up | Observed in dataset B |
+|---|---:|
+| `browser_error` events, total | 38 |
+| …of those, inside a segmented case | **0** |
+| …of those, carrying any text | **0** |
+| Error wording rendered into the portal, inside a case | **0** |
+| Cases that committed more than once (a retry or a duplicate) | **0** of 684 |
+| Cases with no observed commit at all | 57 of 684 |
+
+All 38 `browser_error` events carry an empty text field and sit at the three portal roots (`http://127.0.0.1:5134/` 14 · `http://127.0.0.1:5132/` 13 · `http://127.0.0.1:5133/` 11) — page load, not case failure.
+
+**[O] The one place an abandoned case could be hiding** is the last row: 57 of the 684
+cases show no commit click. **[I]** That is not evidence of failure — step 1's boundary
+accuracy (F1 0.858 on A) is enough to put a commit on the wrong side of a segment edge,
+and `commit_rate` tracks `template_conformance` almost exactly, which is what a boundary
+artefact looks like and not what an error would look like. But the logs cannot separate
+"the commit fell outside the segment" from "the operator gave up on this case", and that
+is the honest statement of the gap.
+
+**[I] What that forces.** The portal's failure behaviour cannot be specified from this
+data, because it was never recorded. What the portal does when a purchase order is
+rejected, when the supplier is already registered, when the worklist has moved under the
+automation, when the session has timed out — none of it is in the logs, and no amount of
+further analysis of these logs will produce it. This is the risk that only surfaces once
+implementation begins, and it is the one thing in this report that a client conversation
+resolves faster than a measurement does.
+
+**[A] The design that follows.** Because the error branch cannot be learned, it has to be
+made safe by construction rather than by coverage: **commit once — never retry blind;
+verify the write actually landed by re-reading the row before moving on; and stop the run
+and queue the case for a human on anything the definition does not recognise.** An
+automation that cannot recognise a failure must not be allowed to guess through one, and
+with **no case in the data committing twice**, there is no evidence anywhere in these logs
+that a second commit on the same case is even idempotent.
+
+**[A] The honest asymmetry.** That error branch is plausibly a third of the build effort —
+verify-after-write, the exception queue, the stop conditions, and the tests that fake
+failures the logs never showed — while being **0% of the observed logs**. It is invisible
+in every column of §4: the recommended target's `structured_target` 0.90, `variant_rate`
+0.17 and `mock_fidelity` 0.91 are all measurements of a world in which nothing goes wrong.
+The ranking is a comparison between processes and is not disturbed by this — the blind spot is identical
+for all twelve — but any estimate of how long the Step-3 build takes should be read with
+it in mind.
+
+**[A] Three governance questions the logs also cannot answer**, and they are the client's
+to settle before an unattended run, not mine: who owns the exception queue when the
+automation stops (an automation with no named human behind it silently becomes a backlog);
+what the agent authenticates as, since the logs show an operator's own session and a
+service account with its own permissions is a different governance object from a person's
+login; and what the audit trail must contain, given that `sensitivity` 0.20 assumes a
+purchase order is reversible — which is only true if there is a record of what was
+written and by which run.
 
 ---
 

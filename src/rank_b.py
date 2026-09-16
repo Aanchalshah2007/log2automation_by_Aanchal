@@ -74,6 +74,21 @@ RE_PCODE_ROW = re.compile(r"(P\d+)-\d+-(\d+)")
 
 MOCKABLE_APPS = {"Microsoft Edge", "Notepad"}
 
+# The portal is served in the browser, so a clipboard_change whose foreground
+# app is Edge was copied from inside the portal itself -- material a DOM-level
+# automation can read without leaving the page.  Content copied out of Word or
+# Excel is a document the automation would have to parse; Notepad is the
+# operator's scratch pad and holds no business data of its own.
+PORTAL_APP = "Microsoft Edge"
+SCRATCH_APPS = {"Notepad"}
+DOCUMENT_APPS = {"Microsoft Word", "Microsoft Excel"}
+
+# Anything the portal might render when a case is rejected, duplicated, or times
+# out.  Searched across every in-segment browser text blob; see
+# failure_path_evidence().
+RE_ERROR_TOKEN = re.compile(
+    r"エラー|失敗|無効|重複|再試行|リトライ|不正|拒否|error|failed|invalid|duplicate", re.I)
+
 # [A] A companion application or reference document counts towards the build
 #     surface only if it recurs in at least this share of the process's cases.
 #     Without a floor, one operator opening Teams once during 56 leave requests
@@ -128,6 +143,11 @@ def dwell(timeline, ts_index, a: int, b: int) -> collections.Counter:
     return out
 
 
+def _share(counter: collections.Counter, apps: set[str]) -> float:
+    tot = sum(counter.values())
+    return round(sum(counter[a] for a in apps) / tot, 3) if tot else 0.0
+
+
 def load_segments(events: dict[str, list[dict]]) -> list[dict]:
     """segments.jsonl with the events, dwell and window history of each attached."""
     segs = [json.loads(l) for l in open(SEGMENTS, encoding="utf-8") if l.strip()]
@@ -154,6 +174,12 @@ def load_segments(events: dict[str, list[dict]]) -> list[dict]:
         for e in events.get(sid, []):
             i = bisect.bisect_right(starts, e["ts"]) - 1
             if i >= 0 and e["ts"] <= ss[i]["_b"]:
+                # context.active_app lags the real foreground by one step on a
+                # large share of app_switch events (common.py), so every event
+                # also carries the app the foreground timeline says was in
+                # front.  measure() reports how often the two agree.
+                j = bisect.bisect_right(tix[sid], e["ts"]) - 1
+                e["_fg_app"] = tl[sid][j][1] if j >= 0 else None
                 ss[i]["_ev"].append(e)
         for s in ss:
             s["_dwell"] = dwell(tl[sid], tix[sid], s["_a"], s["_bn"])
@@ -177,6 +203,9 @@ def measure(label: str, segs: list[dict], split_signal: float,
     routes: collections.Counter = collections.Counter()
     markers: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     clip_chars = typed_chars = pastes = clips = 0
+    clip_src: collections.Counter = collections.Counter()
+    clip_src_ctx: collections.Counter = collections.Counter()
+    clip_src_agree = clip_src_checked = 0
     n_row = n_note = n_commit = n_template = 0
     row_selectors: collections.Counter = collections.Counter()
     commit_ids: set[str] = set()
@@ -238,6 +267,18 @@ def measure(label: str, segs: list[dict], split_signal: float,
             elif e["type"] == "clipboard_change":
                 clips += 1
                 clip_chars += e.get("clip_len") or 0
+                # Two readings of "which app was the content copied from".
+                # context.active_app lags the real foreground (common.py), and
+                # the disagreement here is one-directional -- it reads Edge
+                # while the timeline has already moved to Notepad -- so the
+                # foreground timeline is the primary channel and ctx_app is
+                # reported beside it rather than trusted.
+                ctx = e.get("ctx_app") or "unknown"
+                fg = e.get("_fg_app") or ctx
+                clip_src[fg] += 1
+                clip_src_ctx[ctx] += 1
+                clip_src_checked += 1
+                clip_src_agree += (fg == ctx)
 
             sel = e.get("selector") or ""
             if sel:
@@ -309,6 +350,18 @@ def measure(label: str, segs: list[dict], split_signal: float,
         "clipboard_events_per_case": round(clips / n, 2),
         "clip_chars_per_case": round(clip_chars / n, 1),
         "typed_chars_per_case": round(typed_chars / n, 1),
+
+        # [O] Where the pasted content came from.  copy_paste_ratio says how
+        # much of the case arrives via the clipboard; this says whether that
+        # content is reachable from the DOM, or sits in a desktop document the
+        # automation would have to parse.
+        "paste_source_in_portal": _share(clip_src, {PORTAL_APP}),
+        "paste_source_scratch": _share(clip_src, SCRATCH_APPS),
+        "paste_source_document": _share(clip_src, DOCUMENT_APPS),
+        "paste_source_in_portal_ctx": _share(clip_src_ctx, {PORTAL_APP}),
+        "paste_sources": ";".join(f"{a}:{k}" for a, k in clip_src.most_common()),
+        "paste_source_agreement": (round(clip_src_agree / clip_src_checked, 3)
+                                   if clip_src_checked else 0.0),
 
         "regulation_dwell_s_per_case": round(reg_ms / n / 1000, 2),
         "reference_dwell_s_per_case": round(ref_ms / n / 1000, 2),
@@ -384,6 +437,82 @@ def worklist_variant_rates(events: dict[str, list[dict]]) -> dict[str, dict]:
             "rows": sum(a + r for a, r in per.values()),
         }
     return out
+
+
+def failure_path_evidence(events: dict[str, list[dict]],
+                          segs: list[dict]) -> dict:
+    """[O] What dataset B records about a case that went wrong.
+
+    The answer is nothing, and that is worth measuring rather than assuming.
+    Four independent places a failure would have to show up are checked: the
+    `browser_error` event type, any error wording rendered into the portal's own
+    text, a case committing more than once (a retry or a duplicate), and a case
+    never committing at all.  Only the last is non-zero, and it is a boundary
+    artefact rather than a failure signal -- see the note on it below.  The
+    counts this returns are the evidence behind report section 7.5.
+    """
+    starts: dict[str, list[int]] = {}
+    spans: dict[str, list[tuple[int, int]]] = collections.defaultdict(list)
+    for s in segs:
+        spans[s["session_id"]].append((s["_a"], s["_b"]))
+    for sid in spans:
+        spans[sid].sort()
+        starts[sid] = [a for a, _ in spans[sid]]
+
+    def inside(sid: str, ts: int) -> bool:
+        st = starts.get(sid)
+        if not st:
+            return False
+        i = bisect.bisect_right(st, ts) - 1
+        return i >= 0 and ts <= spans[sid][i][1]
+
+    n_err = in_seg = with_text = 0
+    err_urls: collections.Counter = collections.Counter()
+    for sid, evs in events.items():
+        for e in evs:
+            if e["type"] != "browser_error":
+                continue
+            n_err += 1
+            in_seg += inside(sid, e["ts"])
+            with_text += bool((e.get("text") or "").strip())
+            u = e.get("nav_url") or e.get("tab_url") or ""
+            err_urls[u] += 1
+
+    # error wording rendered into the portal itself, inside a case
+    portal_err: collections.Counter = collections.Counter()
+    multi_commit: collections.Counter = collections.Counter()
+    no_commit: collections.Counter = collections.Counter()
+    cases = 0
+    for s in segs:
+        cases += 1
+        commits = 0
+        for e in s["_ev"]:
+            txt = e.get("text")
+            if txt and e.get("ctx_app") == PORTAL_APP and RE_ERROR_TOKEN.search(txt):
+                portal_err[s["label"]] += 1
+            if RE_COMMIT.match(e.get("selector") or ""):
+                commits += 1
+        if commits > 1:
+            multi_commit[s["label"]] += 1
+        if commits == 0:
+            no_commit[s["label"]] += 1
+
+    return {
+        "browser_error_events": n_err,
+        "browser_error_inside_a_segment": in_seg,
+        "browser_error_with_text": with_text,
+        "browser_error_urls": dict(err_urls.most_common()),
+        "portal_text_error_tokens_in_segments": sum(portal_err.values()),
+        "portal_text_error_tokens_by_process": dict(portal_err.most_common()),
+        "cases": cases,
+        "cases_committing_more_than_once": sum(multi_commit.values()),
+        "cases_committing_more_than_once_by_process": dict(multi_commit.most_common()),
+        # Not a failure signal on its own: step 1's boundary accuracy means a
+        # commit can fall outside the segment it belongs to.  Reported because
+        # it is the only place in the data where an abandoned case *could* be
+        # hiding, and the logs do not let the two be told apart.
+        "cases_with_no_observed_commit": sum(no_commit.values()),
+    }
 
 
 def split_evidence(events: dict[str, list[dict]]) -> dict:
@@ -489,6 +618,8 @@ CSV_COLUMNS = [
     "loop_completeness", "evidence_density", "mock_fidelity", "selector_determinism",
     "pastes_per_case", "clipboard_events_per_case",
     "clip_chars_per_case", "typed_chars_per_case",
+    "paste_source_in_portal", "paste_source_scratch", "paste_source_document",
+    "paste_source_in_portal_ctx", "paste_sources", "paste_source_agreement",
     "regulation_dwell_s_per_case", "reference_dwell_s_per_case",
     "unclassified_word_s_per_case",
     "excel_dwell_s_per_case", "mockable_dwell_share",
@@ -553,6 +684,7 @@ def main() -> None:
             "segmented_minutes": round(sum(m["total_s"] for m in metrics) / 60, 1),
         },
         "conflation_evidence": split_evidence(events),
+        "failure_path_evidence": failure_path_evidence(events, segs_all),
         "ranking": ranked,
         "robustness_conflated_split": [
             {k: r[k] for k in ("label", "client_roi", "impact", "automatability",
@@ -593,6 +725,13 @@ def main() -> None:
     for i, r in enumerate(ranked_thin[:5], 1):
         print(f"  {i}. {r['label']:34s} {r['client_roi']:.4f}")
     print(f"\nconflation evidence: {out['conflation_evidence']}")
+    fp = out["failure_path_evidence"]
+    print(f"failure-path evidence: {fp['browser_error_events']} browser_error events, "
+          f"{fp['browser_error_inside_a_segment']} inside a case, "
+          f"{fp['browser_error_with_text']} carrying text; "
+          f"{fp['portal_text_error_tokens_in_segments']} portal error strings in "
+          f"{fp['cases']} cases; "
+          f"{fp['cases_committing_more_than_once']} cases committed more than once")
     print(f"\nwrote {csv_path}\nwrote {json_path}")
 
 

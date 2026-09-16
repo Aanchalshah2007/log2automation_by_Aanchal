@@ -32,7 +32,7 @@ process labels recovered with no supervision (ARI 0.912 overall, 0.993 on the 56
 sessions where the browser extension was connected). A 21-session holdout scores better
 than the 42-session dev split it was tuned on.
 
-**Step 2 headline.** Twelve processes measured on 37 quantities each, scored on two
+**Step 2 headline.** Twelve processes measured on 43 quantities each, scored on two
 deliberately separate axes: `Client_ROI = Impact x Automatability x Client_Feasibility`
 (the ranking) and `Build_Fit` (whether a convincing prototype fits in the days left — a
 fact about my week, not the client's business, so it never enters the ranking).
@@ -83,6 +83,8 @@ src/
 
   roi.py             STEP 2 scoring model: Client_ROI and Build_Fit
   rank_b.py          STEP 2 measurement + ranking              -> reports/
+  report_tables.py   renders the generated tables in the step-2 report
+  verify_step2.py    235 checks: every report table vs the generated artefacts
   qa_segments.py     14 output checks; exits non-zero on failure
   run_eval_a.py      quick dataset-A scoreboard
 
@@ -117,6 +119,7 @@ python3 validate_a.py     # dataset A: metrics, ablations, label/GT contingency
 python3 run_b.py          # writes ../segments.jsonl
 python3 qa_segments.py     # 14 checks on the deliverable
 python3 rank_b.py         # step 2: metrics + ranking -> ../reports/
+python3 verify_step2.py   # 235 checks: the step-2 report against those artefacts
 
 python3 tune.py           # optional: re-run the parameter sweep
 python3 discover_b.py     # optional: re-run process discovery on B

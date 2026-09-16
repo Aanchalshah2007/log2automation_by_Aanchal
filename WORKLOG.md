@@ -279,3 +279,95 @@ The key judgments remained mine:
 The sensitivity table is the only unmeasured input in the model, so I kept it in one block in `roi.py`, allowing a reviewer to change the assumption and immediately re-rank the processes.
 
 
+
+---
+
+## Day 4 - 2026-09-16
+### Self-audit of Step 2 before starting the build
+
+Before starting Step 3 I read the Step-2 report back against the brief's feasibility
+questions — how would the data be accessed, how complex is the business logic, what
+operational and governance constraints apply, what risks only surface once implementation
+begins. The branching and governance questions were answered. Two were not, and both were
+answerable from data I already had.
+
+### Gap 1 - I asserted where the pasted content came from instead of measuring it
+
+`copy_paste_ratio` carried a lot of weight in `Automatability`, and the sentence holding it
+up was "content that was pasted came from somewhere a program can also read." That is an
+inference, and `clipboard_change` records the answer directly: the event fires at the
+*copy*, so the foreground application at that instant is the surface the content came out
+of.
+
+Measuring it turned up something I had not expected. Two channels disagree on 12.4% of the
+865 in-case clipboard events, and the disagreement is one-directional - `context.active_app`
+reads Edge where the foreground timeline has already moved to Notepad, which is the same
+one-step lag I documented in `common.py` on Day 2. So I made the timeline the primary
+channel and kept the `ctx` reading in its own column rather than picking the flattering
+number: the honest portal share for the recommended target is **0.95, not 1.00**.
+
+The column that actually decides a build turned out to be a different one. Splitting the
+sources into portal / note pad / **document**:
+
+- `fin_purchase_order_management` — **0.00 document-sourced.** No Word, no Excel, no file.
+- `fin_payment_processing` 0.38, `fin_manager_expense_approval` 0.32,
+  `ops_contract_management` 0.31, `hr_onboarding` 0.31 — the four processes I had already
+  deferred as judgment-heavy.
+
+I did not fit anything to produce that. `judgment_step` is a dwell measurement and this is
+a clipboard count, and they land on the same four processes — a case whose handling depends
+on a 規定 is a case whose text is copied out of that 規定. The note-pad share is not an
+integration cost and I said so explicitly, because `ops_inventory_management` at 0.48 looks
+alarming until you notice the note pad holds no data of its own.
+
+### Gap 2 - every case I measured is a happy path, and I never said so
+
+Four places a failed case would have to leave a trace, all empty: 38 `browser_error` events
+but **0 inside a segment** and 0 carrying any text (they sit at the three portal roots -
+page load, not case failure); **0** error strings rendered into the portal inside a case;
+**0** of 684 cases committing twice.
+
+So the portal's failure behaviour cannot be specified from these logs, because it was never
+recorded. That is the risk the brief asks about that only surfaces once implementation
+begins, and no further analysis of this data produces it.
+
+What I could not resolve honestly: 57 of 684 cases show no commit click at all. I wanted
+that to be a clean zero. It is not, and I wrote it down rather than leaving it out -
+`commit_rate` tracks `template_conformance` almost exactly, which is what a boundary
+artefact looks like rather than what an abandoned case looks like, but the logs do not
+separate the two.
+
+New section 7.5 states the happy-path measurement, the defensive design it forces (commit
+once, verify the write landed by re-reading the row, stop and queue for a human on anything
+unrecognised - tagged as an engineering assumption, not a finding), and the asymmetry I
+think matters most: that error branch is plausibly a third of the build effort while being
+0% of the observed logs, and it is invisible in every column of the ranking table. It does
+not disturb the ranking - the blind spot is identical for all twelve processes but it
+should be read alongside any estimate of how long Step 3 takes. I also added the three
+governance questions the logs cannot answer (who owns the exception queue, what the agent
+authenticates as, what the audit trail must contain).
+
+### Verification
+
+The Day-3 verification pass was manual and it caught a corrupted table late. I did not want
+to repeat that, so this time the report's tables are generated (`report_tables.py`) and
+checked by a script (`verify_step2.py`, 235 checks across sections 2.2, 4, 5, 3.1 and 7.5).
+
+It immediately earned itself: it caught `0.1836` written into section 5 as `0.183` when
+correct rounding is `0.184`. A figure I had verified by hand on Day 3 and read past.
+
+**Nothing in the ranking moved.** Both additions are measurements, not new scored inputs:
+0 pre-existing CSV cells changed, 0 ranking fields changed, the JSON gained one key, and
+re-running `rank_b.py` produces byte-identical output.
+
+### AI Usage
+
+Claude Code ran the audit passes over the event cache (clipboard source cross-tab,
+`browser_error` placement, commit counts) and drafted the two report additions.
+
+The judgments were mine: making the conservative clipboard channel primary once the two
+disagreed rather than quoting the 1.00, splitting the sources by *document* rather than by
+"in portal / not in portal" because the document share is the one that costs a build,
+writing the 57 uncommitted cases down instead of leaving them out, and keeping the
+defensive error design tagged as an assumption rather than presenting it as something the
+data told me.
