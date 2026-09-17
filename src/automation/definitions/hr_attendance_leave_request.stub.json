@@ -4,7 +4,6 @@
   "state": "stub",
   "screen_name": "勤怠・休暇申請",
   "system_name": "HR人事給与システム",
-
   "_why_this_file_exists": [
     "This is the proof that adding a second process is a new JSON file and not new code.",
     "Everything below is measured from dataset B in exactly the same way the 発注管理 definition was.",
@@ -21,7 +20,6 @@
     "  * step-2 variant_rate 0.42 against 0.17, so more cases will fail the enum precheck",
     "    and land in the exception queue — which is the correct outcome, not a regression."
   ],
-
   "_provenance": {
     "measured": [
       "#la-note / #btn-la-ok — 56 browser_click and 54 browser_form_input events on http://127.0.0.1:5132/#/leave-applications",
@@ -36,12 +34,10 @@
       "commit_allowed_from / expect_after_commit copied from the 発注管理 definition, unverified for this screen"
     ]
   },
-
   "target": {
     "base_url": "http://127.0.0.1:5232",
     "route": "/#/leave-applications"
   },
-
   "selectors": {
     "table": "#la-table",
     "row": "#la-table > tbody > tr:nth-of-type({n})",
@@ -50,9 +46,9 @@
     "detail_root": "#la-detail",
     "detail_field": "#la-detail [data-field='{field}']",
     "note": "#la-note",
-    "commit": "#btn-la-ok"
+    "commit": "#btn-la-ok",
+    "ready": "#la-table > tbody > tr"
   },
-
   "row_columns": {
     "id": 1,
     "emp_id": 2,
@@ -62,36 +58,53 @@
     "department": 6,
     "status": 7
   },
-
   "field_schema": {
-    "name":             {"required": true, "source": "detail pane (DOM)"},
-    "emp_id":           {"required": true, "source": "detail pane (DOM)", "pattern": "^E\\d{4}$"},
-    "shinsei_shubetsu": {"required": true, "source": "detail pane (DOM)",
-                         "enum": ["年次有給休暇", "半日有給申請", "代休申請",
-                                  "フレックス変更申請", "特別休暇（慶弔）"]},
-    "acquired_date":    {"required": true, "source": "detail pane (DOM)", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}
+    "name": {
+      "required": true,
+      "source": "detail pane (DOM)"
+    },
+    "emp_id": {
+      "required": true,
+      "source": "detail pane (DOM)",
+      "pattern": "^E\\d{4}$"
+    },
+    "shinsei_shubetsu": {
+      "required": true,
+      "source": "detail pane (DOM)",
+      "enum": [
+        "年次有給休暇",
+        "半日有給申請",
+        "代休申請",
+        "フレックス変更申請",
+        "特別休暇（慶弔）"
+      ]
+    },
+    "acquired_date": {
+      "required": true,
+      "source": "detail pane (DOM)",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    }
   },
-
   "row_schema": {
     "status": {
-      "commit_allowed_from": ["未処理"],
+      "commit_allowed_from": [
+        "未処理"
+      ],
       "expect_after_commit": "登録済み"
     }
   },
-
   "write": {
     "field": "note",
     "template": "勤怠申請確認。種別：{shinsei_shubetsu}。取得日：{acquired_date}。問題なし承認。"
   },
-
   "policy": {
     "commit_attempts": 1,
     "retry_on_failure": false,
     "verify_timeout_ms": 4000,
     "on_unrecognised": "queue",
-    "on_verify_failure": "queue"
+    "on_verify_failure": "queue",
+    "ready_timeout_ms": 15000
   },
-
   "baseline": {
     "median_manual_cycle_s": 9.0,
     "source": "reports/step2_process_metrics.csv, median_s for hr_attendance_leave_request (56 observed cases)",

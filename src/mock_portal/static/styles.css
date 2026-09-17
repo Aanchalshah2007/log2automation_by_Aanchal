@@ -91,3 +91,17 @@ td.odd{color:var(--warn); font-weight:600}
   background:#eef1f4; font-weight:600}
 .row-note{margin-top:10px; font-size:11.5px; color:var(--muted)}
 .row-note code{background:#f0f2f5; padding:1px 4px; border-radius:3px}
+
+/* --- embedded (?embed=1): same page, narrower frame --------------------- */
+body.embed #portal-nav{display:none}
+body.embed .shell{padding:10px; gap:0}
+body.embed h1{font-size:17px; margin:2px 0 10px}
+body.embed .pane{padding:10px 12px; margin-bottom:10px}
+body.embed #rt-table{font-size:11px}
+body.embed #rt-table th,body.embed #rt-table td{padding:3px 4px; white-space:nowrap}
+body.embed #rt-table td:nth-of-type(3){max-width:96px; overflow:hidden;
+  text-overflow:ellipsis}
+body.embed #rt-table td:nth-of-type(4){max-width:112px; overflow:hidden;
+  text-overflow:ellipsis}
+body.embed .detail-grid{grid-template-columns:repeat(2,1fr)}
+body.embed .row-note{font-size:10.5px}

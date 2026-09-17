@@ -40,16 +40,19 @@ the review UI displays roughly double the wall clock and are not part of the wor
 
 ```
 run_start  definition=fin_purchase_order_management v1.0.0  n=18  llm_in_runtime=false
-run_end    processed=18  automated=14  queued=4  automation_seconds=11.0
+run_end    processed=18  automated=14  queued=4  automation_seconds=10.8
 ```
 
 **2.1 The engine's full motif, per case.** Read the worklist row → open the case by
 clicking its 氏名 cell → read the detail pane → apply the reviewer's corrections →
 check the case against the definition → compose the note → write it to `#rt-note` →
-click `#btn-rt-ok` **once** → **re-read the row's ステータス and confirm it flipped**.
-The read-back is a first-class step: it is emitted to the UI as
-`wrote → verifying… → ✓ 登録済み confirmed`, and its result is a field in the audit
-record, not a silent branch.
+**re-read `#rt-note` and confirm the value landed** → click `#btn-rt-ok` **once** →
+**re-read the row's ステータス and confirm it flipped**. There are two read-backs, not
+one, and both are first-class steps: they are emitted to the UI as
+`writing the note → ✓ note confirmed in the DOM → committing (once, no retry) →
+verifying… → ✓ 登録済み confirmed`, and both land in the audit record as
+`note_confirmed` and `verify_confirmed`. If the note does not confirm, the commit
+button is never touched (§5b.4).
 
 **2.2 The seeded failures actually land in the exception queue.** Four of the 18 cases
 are deliberately unautomatable, and each one exercises a different stop condition:
@@ -112,6 +115,21 @@ definition id and version, every field read out of the DOM, the reviewer's edits
 effective values, the composed note, whether a commit was attempted and **how many
 times**, whether verify confirmed, the status before and after, review seconds, engine
 seconds, and timestamps. `llm_in_runtime: false` is recorded on every record.
+`note_confirmed` records the pre-commit read-back separately from `verify_confirmed`.
+
+**2.7 The whole demo, driven through the real UI.** Not the CLI — a browser clicking the
+actual buttons: RESET DEMO, then APPROVE, then EDIT-and-approve with a corrected `reason`,
+then APPROVE, then *Run remaining as batch*.
+
+```
+reset            18 in worklist · 18 awaiting review · 0 automated · 0 queued · —
+after 3 reviewed 18 · 15 · 3 · 0
+after the batch  18 ·  0 · 14 · 4 · ≈58% hands-on time removed
+```
+
+14 automated, 4 queued, every counter reconciling to 18, a positive saving, and the four
+seeded failures in the queue with their reasons. The edited case committed the corrected
+value, not the one the DOM held.
 
 ---
 
@@ -221,6 +239,337 @@ failures *I* invented, so they prove the mechanism works, not that it covers wha
 real portal does. **The first real-system run will find failure modes this queue has no
 code for.** The mitigation is that they all land in the same place — the queue — because
 the default is to stop, not to improvise.
+
+---
+
+## 5b. The bugs that only surfaced once it was running — the real "risks that appear at implementation"
+
+Step 2 §7.5 predicted that the failure branch would be the expensive part and that the
+first real run would find modes the design had no code for. It did — five times — and not
+once in the automation logic. They are recorded here because the assignment asks what
+surfaces when implementation begins, and this is the honest answer: **every one was in the
+plumbing around the automation or in the host it runs on, not in the browser work itself.**
+Two of them (§5b.5, §5b.6) were found only by running the prototype on a machine that was
+not the one it was written on.
+
+### 5b.1 The engine deadlocked against a full stderr pipe — [MEASURED]
+
+**Symptom.** A run through the review UI wrote its job file and then produced **no audit
+records at all**. The portal was left showing the case at 未処理 with `#rt-note` empty;
+pressing 登録確定 by hand returned 「…: 処理内容が未入力です」, which is the portal behaving
+correctly. The natural reading — "the note-writing code is broken" — was wrong.
+
+**What was checked first, and cleared.** The same job file, run against the same portal
+straight from the CLI, completed green (`automated=1`, 未処理 → 登録済み). Then the write
+path itself was instrumented: `#rt-note` is a real `<textarea>`, not a contenteditable;
+`page.fill()` sets the value **and** dispatches an `input` event; `input_value()` reads
+the value straight back; the commit that follows flips the row. So the selector, the
+element type, the reactive-event question, the composed value and the job-payload
+serialization were all sound.
+
+**The actual cause.** `src/app.py` launched the engine with
+`Popen(stdout=PIPE, stderr=PIPE)`, iterated **stdout to completion**, and only then called
+`proc.stderr.read()`. Nothing drained stderr in the meantime. The pipe buffer on this
+kernel is **65536 bytes** (measured with `fcntl(F_GETPIPE_SZ)`). Once chromium wrote more
+than that to stderr it blocked in `write()`; blocked, it produced no more stdout; with no
+more stdout the parent stayed in its read loop; and so nobody ever drained stderr. Classic
+deadlock, and it is *environment-dependent* in exactly the way that makes it nasty: it
+never fired on a machine with fonts and browser libraries installed, because chromium
+stayed quiet. On a machine that emits `Fontconfig error`, dbus and GPU warnings, 64 KB
+arrives quickly.
+
+Reproduced deterministically with a 20-line probe (a child that writes two stdout lines
+and 3200 stderr lines): the reader blocked after **one** stdout line — `run_start` — which
+is precisely the observed signature of a run that starts and then writes nothing.
+
+**Fix.** stderr is drained on its own thread from the moment the process starts. The same
+probe then completes with both stdout lines and all 3200 stderr lines read.
+
+**[ASSUMPTION] What this means beyond the prototype.** A production deployment would run
+the engine from a scheduler, not from Streamlit, so this specific plumbing would not
+exist. The transferable lesson is narrower and worth keeping: **a UI that supervises a
+browser automation is itself a place the automation can fail silently**, and the failure
+looks exactly like a broken automation. The audit log is what distinguished the two —
+"no records at all" is a different fault from "records that say the write failed".
+
+### 5b.2 The dashboard and the portal could disagree about which demo was running — [MEASURED]
+
+**Symptom.** The portal held 18 fresh 未処理 cases while the dashboard simultaneously
+showed nothing pending and counters at 0/0/0.
+
+**Cause.** The UI kept a third opinion. Besides the portal (which owns the cases) and the
+audit log (which owns what happened to each case), `src/app.py` kept its own `handled`
+set, and `dispatch()` added every dispatched case to it **unconditionally** — including
+when the engine returned nothing, as in §5b.1. Those cases then vanished from the pending
+list while never appearing in the counters. Restarting `server.py` in a terminal produced
+the same class of disagreement from the other direction: a brand-new worklist with the
+previous run's ids still marked handled.
+
+**Fix, in three parts.**
+1. The `handled` set is gone. A case counts as decided **only** if the audit log holds a
+   record for it. Every counter — worklist total, awaiting review, automated, queued — is
+   recomputed from the portal's state plus this run's audit records on every redraw, with
+   an assertion that `total == pending + automated + queued`.
+2. The portal now stamps a new **epoch** on every reset and every start, and returns it in
+   `/api/state`. The UI binds to an epoch and rebinds automatically when it changes, so a
+   reseed behind the dashboard's back reloads it instead of desyncing it.
+3. When the engine returns no record for a dispatched case, the UI says so and leaves the
+   case pending rather than silently consuming it.
+
+**Verified from real state**, not from the numbers the code expects:
+
+| | worklist | awaiting review | automated | exceptions |
+|---|---:|---:|---:|---:|
+| fresh reset | 18 | 18 | 0 | 0 |
+| after 1 approve | 18 | 17 | 1 | 0 |
+| after 1 flag | 18 | 16 | 1 | 1 |
+| portal reseeded behind the dashboard | 18 | 18 | 0 | 0 (rebound, with a notice) |
+
+### 5b.3 The engine could start before the worklist existed — [MEASURED]
+
+Found while fixing the above, not reported by the user. `engine.py` waited on
+`#rt-table`, which ships in the static HTML with an **empty `<tbody>`** and is filled by
+the page's own fetch. With `/api/state` delayed, `wait_for_selector('#rt-table')` was
+measured returning at **rows = 0** — after which every case would have failed `read_row`
+with `ROW_NOT_FOUND` and been queued. It never fired on a warm local server, which is
+exactly why it was worth finding before a slower machine found it.
+
+**Fix.** The definition now carries a `selectors.ready` (`#rt-table > tbody > tr`) and the
+engine waits for the worklist to be *populated*, not merely present. A timeout there is no
+longer silent either: the engine writes one `ENGINE_STARTUP_FAILED` audit record per job
+rather than exiting with nothing, so a startup failure can never lose a case.
+
+### 5b.4 What changed in the automation itself
+
+One thing, and it came out of §5b.1 rather than from a defect: writing the note and
+confirming the note are now **separate, separately reported steps**, and the confirmation
+happens immediately before the commit click. The engine re-reads `#rt-note`, requires it
+to hold exactly the composed value, and **queues the case with `NOTE_NOT_CONFIRMED`
+without touching the commit button** if it does not. Previously the check existed but sat
+inside the write helper and was invisible in the trace. `note_confirmed` is now a field in
+every audit record.
+
+This closes the loop the report claimed all along — the engine now verifies **both** of
+its writes, the note before committing and the row status after — and it means an empty
+note can no longer reach the portal's validator at all.
+
+---
+
+### 5b.5 A space in the demo machine's own username stopped the engine launching — [MEASURED]
+
+**Symptom.** On the evaluation machine, pressing APPROVE showed
+*"The automation engine produced no run — nothing was written to the portal and no case
+was marked handled"*, with this on stderr:
+
+```
+C:\Users\Aanchal: can't open file 'C:\...
+```
+
+All 18 cases stayed pending. The portal was untouched, so the case sat at 未処理 with an
+empty `#rt-note` — and pressing 登録確定 by hand then returned 「…: 処理内容が未入力です」,
+which is the portal being correct, not a second bug.
+
+**Cause.** The Windows account folder is `C:\Users\Aanchal Shah` — **it contains a space**
+— and `engine.py` called `os.execv(sys.executable, [sys.executable] + sys.argv)` to re-exec
+itself with `LD_LIBRARY_PATH` set. On POSIX `execv` takes a real argument vector and a
+space is harmless. **On Windows there is no exec:** the CRT joins the argument list into a
+single command line *without quoting*, so the interpreter path splits at the space.
+Reproduced verbatim:
+
+```
+$ python.exe probe.py --definition "C:\a b\def.json"
+exe = 'C:\\Users\\Aanchal Shah\\AppData\\Local\\Programs\\Python\\Python313\\python.exe'
+--- calling os.execv(sys.executable, [sys.executable] + sys.argv) ---
+C:\Users\Aanchal: can't open file 'C:\...\automation_project\Shah\AppData\...\python.exe'
+```
+
+`argv[0]` became `C:\Users\Aanchal` and the "script" became the tail after the space. Two
+things made it reachable at all: the shim was **not OS-gated**, and `build/pwdeps/` — a
+Linux-only artefact — sits on a path Windows can also see, so `local.is_dir()` was true
+there too.
+
+**Note what was *not* the cause.** The `subprocess.Popen` in `src/app.py` was already a
+list with `shell=False`. The audit asked for covered every spawn site in step 3; there are
+exactly two, and the broken one was the `execv`, not the `Popen`.
+
+**Fix.** The re-exec is gone entirely — it was never needed. Chromium is launched as a
+child process and inherits `os.environ` at spawn time, so setting `LD_LIBRARY_PATH`
+in-process is sufficient (verified: chromium launches with the variable set and no exec).
+The shim is now `if os.name != "posix": return`, and **there is no exec anywhere in this
+program**. `app.py`'s command is unchanged in shape but now passes every path
+`.resolve()`d as its own list element with `shell=False` stated explicitly, and the
+surfacing of the child's stderr in the UI — which is how this was caught — is kept.
+
+**5b.6 And immediately behind it, the same class of bug: cp1252.** With the launch fixed,
+the engine got as far as writing the note and then died with
+`UnicodeEncodeError: 'charmap' codec can't encode characters` — a Windows console defaults
+to cp1252, and every string this program prints is Japanese. The mock portal died the same
+way on its own startup banner. Both now force UTF-8 on `stdout`/`stderr` before writing
+anything.
+
+**[ASSUMPTION] Why this belongs in a risk section and not a changelog.** Neither bug is
+about the automation. Both are about the *host*: a username with a space, and a console
+codepage. Step 2 §7.5 argued the failure branch would be the expensive part; what actually
+cost the most was the environment the demo runs in. A rollout onto client laptops will hit
+this class first and hardest — localised Windows installs, OneDrive-redirected home
+folders with spaces, corporate paths several levels deep — and none of it is visible in
+the operation logs the whole analysis is built on. **The mitigation is not cleverer code,
+it is running the thing on a machine that is not the developer's before calling it done.**
+
+---
+
+---
+
+## 5c. Two portals behind one URL — the state-architecture bug
+
+The last and worst of the implementation-time findings, and the only one that was an
+*architecture* problem rather than a plumbing one.
+
+### 5c.1 The symptom — [ENCOUNTERED-AND-FIXED]
+
+RESET, the engine and the reviewer's browser tab did not reliably agree about the state
+of the portal. A run could report "0 automated, 18 queued, negative saving" while the
+portal visibly held a fresh worklist, and a case approved in the UI could fail to change
+in a separately opened `http://127.0.0.1:5233/` tab.
+
+### 5c.2 The reproduction — [MEASURED]
+
+`netstat` showed **two processes listening on `127.0.0.1:5233` simultaneously**. Stopping
+one proved they held entirely different state behind the same URL:
+
+| listener | epoch | statuses |
+|---|---|---|
+| WSL `python3 server.py` | `c54b40020cbf` | 14 登録済み · 1 完了 · 3 未処理 — **spent** |
+| Windows `python.exe server.py` | `aa361abcbf8e` | 17 未処理 · 1 完了 — **fresh** |
+
+Which one any given client reached was decided by the TCP stack, not by configuration. So
+RESET could reseed one portal while the engine wrote to the other and the reviewer's tab
+rendered a third view of the demo. Every "counter" symptom downstream followed from that.
+
+### 5c.3 The cause — [MEASURED], and it was mine
+
+`Server.allow_reuse_address = True` in `src/mock_portal/server.py`. On Linux `SO_REUSEADDR`
+only relaxes TIME_WAIT. **On Windows it genuinely permits a second process to bind an
+address that is already bound.** Measured directly:
+
+```
+SO_REUSEADDR=True  -> SECOND BIND SUCCEEDED   (this is the bug)
+SO_REUSEADDR=False -> refused, errno 10048    (correct)
+```
+
+So a second `python src/mock_portal/server.py --port 5233` started **silently** instead of
+failing, and from that moment the URL was ambiguous. Nothing in the system could detect it,
+because nothing identified *which* portal process a client had reached.
+
+### 5c.4 Where the authoritative state actually lives — [MEASURED]
+
+In the memory of **one** portal process: the `_STATE` dict in `src/mock_portal/server.py`.
+There is no state file and no second copy — deliberately, because a second copy is exactly
+the thing that can drift. The row statuses, detail fields, note/comment, 種別 and ステータス
+are owned there and nowhere else. The browser page renders that state; the Playwright
+engine changes it by driving that page; Streamlit only reads it.
+
+That design was already right. What was missing was any way to tell **which process** was
+serving it.
+
+### 5c.5 The fix — single source of truth, made verifiable
+
+1. **A duplicate portal can no longer start.** `allow_reuse_address` is now POSIX-only, and
+   on Windows the socket additionally sets `SO_EXCLUSIVEADDRUSE`. Before binding, the
+   server probes the port and refuses to start if a portal already answers there, naming
+   the incumbent's `server_id`, pid and epoch.
+2. **The portal identifies itself.** `/api/state` returns `server_id` (`pid@start_time`),
+   `pid`, `port` and `epoch`. The page stamps `server_id` and `epoch` onto `<body>`.
+3. **The engine records which portal it actually drove** — read from the rendered DOM, so
+   it is what the *browser* reached, not what anyone intended. Every audit record now
+   carries `portal_server_id` and `portal_epoch`.
+4. **The engine refuses to write to the wrong portal.** Streamlit passes `--expect-server`;
+   on a mismatch the run is abandoned with one audit record per job, nothing written.
+5. **The engine is pinned to the portal the UI is reading.** `--base-url` overrides the
+   definition's `target.base_url`, closing the gap where the sidebar pointed at one portal
+   and the definition at another.
+6. **RESET resets the actual portal and reads the result back from it** — a POST to the
+   portal's own `/api/reset` followed by a fresh GET, reporting the server_id, pid, case
+   count and committable count it observed. Streamlit's own variables are dropped
+   separately, only once the new epoch is observed.
+
+### 5c.6 Why the counters diverged, and how they are derived now — [ENCOUNTERED-AND-FIXED]
+
+Two causes, both removed:
+
+* **The ambiguous portal** (§5c.2) meant Streamlit and the engine could legitimately be
+  describing different worklists.
+* **Streamlit's "what has been decided" was session-local.** It accumulated audit records
+  in `st.session_state`, so a browser reload or a second tab forgot work already done to
+  the same worklist — and then offered an already-committed case for approval, which the
+  engine correctly refused with `STATUS_NOT_COMMITTABLE`. Observed during this pass: a
+  clean run scored 13 automated / 5 queued instead of 14 / 4 for exactly this reason.
+
+Counters are now derived on every redraw from **two** authoritative sources and nothing
+else — the portal's live state, and the audit log filtered by the portal's current epoch:
+
+```
+automated = audit says automated  AND  the portal shows 登録済み
+queued    = audit holds a final exception or FLAG result
+awaiting  = cases with neither
+disputed  = audit claims automated but the portal disagrees   (surfaced, never hidden)
+```
+
+No counter is incremented or decremented anywhere. The invariant
+`in_worklist == awaiting + automated + queued + disputed` is checked every redraw and
+rendered as a visible error if it ever fails, rather than asserted away. Reading the
+decided set from the log by epoch also made the dashboard survive a reload: a brand-new
+browser session against a worked portal reports the same 14 / 4 / ≈56% and does not
+re-offer a committed case.
+
+### 5c.7 The zero-committable guard — [ENCOUNTERED-AND-FIXED]
+
+Before any run, Streamlit counts rows in 未処理 **in the live portal**. If that is zero the
+engine is not launched at all and the UI says exactly *"Nothing committable — press RESET
+DEMO first"*. A spent portal is not a result: without this, starting a demo against one
+produced "0 automated, 18 queued, negative saving", which is a broken run dressed up as an
+ROI figure. Verified against a deliberately exhausted portal: message shown, batch button
+disabled, APPROVE not offered, engine never spawned.
+
+### 5c.8 What was NOT changed
+
+The engine's safety rules are untouched. Commit is still allowed only from 未処理, the
+commit is still a single click with no retry, the note is still re-read before the commit
+and the row re-read after it, and a case that cannot be verified still stops and goes to a
+human. Streamlit still cannot mutate portal row status — it has no code path that does, by
+design. The four seeded failures were not altered to improve the numbers.
+
+### 5c.9 Evidence, before and after — [MEASURED]
+
+Before: two listeners on `127.0.0.1:5233` with different epochs and different statuses.
+
+After, one continuous session against a single portal (`server_id 8176@1789670585`):
+
+```
+STEP 3  RESET DEMO
+STEP 4  portal read directly:  epoch 5ba4411ae5af   {未処理: 17, 完了: 1}
+        UI: 18 worklist · 18 awaiting · 0 automated · 0 queued
+STEP 5  portal BEFORE 001: ('未処理', '')
+        portal AFTER  001: '登録済み' + the composed note
+        audit: note_confirmed=True commit_attempts=1 verify_confirmed=True
+               portal_server_id=8176@1789670585
+STEP 6  three live approvals -> rows 1,2,3 all 登録済み in the portal
+STEP 7  batch -> UI: 18 · 0 awaiting · 14 automated · 4 queued · ≈56%
+STEP 8  queue shows REQUIRED_FIELD_MISSING, STATUS_NOT_COMMITTABLE,
+        ENUM_UNRECOGNISED, VERIFY_FAILED; no invariant or disagreement error
+        portal read directly: {登録済み: 14, 未処理: 3, 完了: 1}
+STEP 9  invariant 18 == 0 + 14 + 4  -> True
+VERIFY_FAILED P10-07054374-017: commit_attempts=1 verify_confirmed=False
+              portal still '未処理' — not retried
+```
+
+**[ASSUMPTION] What this means for a rollout.** The client's real portal is a service
+somebody else operates, so "two servers behind one URL" becomes "which environment am I
+pointed at" — staging versus production, or a load balancer with two backends holding
+different session state. The defence generalises unchanged: make the target identify
+itself, record that identity in the audit trail, and refuse to write when it is not the
+one the human reviewed. None of this is visible in the operation logs; it only appears
+once something actually runs.
 
 ---
 
@@ -364,7 +713,9 @@ not an answer to it.
 
 | | |
 |---|---|
-| **Genuinely works on the mock** | the engine's full read → precheck → write → commit-once → verify-by-read-back loop; approve / edit / flag, with EDIT changing what commits; the exception queue, including all four seeded failures landing in it; no double-commit, verified by replay; the relative time-saved metric; the audit log |
+| **Genuinely works on the mock** | the engine's full read → precheck → write note → confirm-note → commit-once → verify-by-read-back loop; approve / edit / flag, with EDIT changing what commits; the exception queue, including all four seeded failures landing in it; no double-commit, verified by replay; counters derived from real state, verified against the portal; the relative time-saved metric; the audit log |
+| **Found and fixed while running it** | a stderr-pipe deadlock in the UI's subprocess handling that made the engine write nothing; a start-before-the-worklist-loads race; an `os.execv` re-exec that a space in the machine's own username broke on Windows; a cp1252 console that could not encode the Japanese the whole program prints (§5b); and — the architecture one — **two portal processes bound to `127.0.0.1:5233` at once with different state**, so RESET, the engine and the reviewer's browser tab could each be describing a different demo (§5c). |
+| **Single source of truth** | the portal process owns the row state in memory, with no second copy anywhere; the audit log owns what the automation attempted. Counters are derived from those two on every redraw, `automated` requires the portal to corroborate the audit record, and the invariant `worklist == awaiting + automated + queued` is shown as an error if it ever fails rather than asserted away. |
 | **Explicitly mocked** | the portal (no system access) and every case value (never logged) |
 | **Explicitly manual after deployment** | the exception queue, flagged cases, the review itself, and the decision to force a queued case through |
 | **Explicitly designed rather than observed** | the entire failure branch — 0 failures in 684 observed cases |

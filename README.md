@@ -46,8 +46,9 @@ step 1 established it is two business objectives sharing one worklist.
 
 **Step 3 headline.** A human-in-the-loop prototype for 発注管理: a reconstructed mock of
 the screen, a **deterministic, config-driven** Playwright engine that runs the observed
-motif per case (open row → write the templated note → **commit once** → **verify the
-write landed by re-reading the row's ステータス**), and a Streamlit review UI where a
+motif per case (open row → write the templated note → **re-read the note field to confirm
+it landed** → **commit once** → **verify by re-reading the row's ステータス**), and a
+Streamlit review UI — with the portal embedded live beside it — where a
 person approves, corrects or flags each case before anything commits. **No LLM runs
 anywhere in the runtime**, and `llm_in_runtime: false` is recorded on every audit record.
 Adding a second process is a new JSON definition, not new code — one full definition
@@ -172,8 +173,11 @@ If that last command fails because `sudo` is unavailable (the symptom is
 git-ignored `build/` directory and `engine.py` picks it up on its own.
 
 **1 — the mock portal** (terminal 1). The 発注管理 screen, acting as both the source and
-the destination. It holds the case state server-side, so the engine's verify step is a
-real read of real state.
+the destination. **This process is the single source of truth for the portal's row
+state** — it holds it in memory, there is no state file, and it refuses to start if
+another portal is already serving the same port (two portals behind one URL was a real
+bug; see build notes §5c). Its banner prints the `server_id` that every audit record is
+stamped with.
 
 ```bash
 python3 src/mock_portal/server.py --port 5233 --cases 18
@@ -188,11 +192,19 @@ streamlit run src/app.py
 #  -> http://localhost:8511
 ```
 
-Demo flow: approve the first few cases one at a time, watching the engine trace go
-`wrote → verifying… → ✓ 登録済み confirmed`, then press **Run remaining as batch**. Use
-**EDIT** on at least one case — the value you type is the value that commits, and the
-audit log records both. Four of the eighteen cases are deliberately unautomatable and
-will land in the exception queue instead of committing; that number is the point.
+Demo flow: press **RESET DEMO** in the sidebar, then approve cases one at a time. The
+portal is embedded live on the right — watch the ステータス column flip 未処理 → 登録済み
+as each case commits, and watch the engine trace on the left go
+`writing the note → ✓ note confirmed in the DOM → committing (once, no retry) →
+verifying… → ✓ 登録済み confirmed`. Then press **Run remaining as batch**. Use **EDIT**
+on at least one case — the value you type is the value that commits, and the audit log
+records both. Four of the eighteen cases are deliberately unautomatable and land in the
+exception queue instead of committing; that number is the point.
+
+The counters (**worklist / awaiting review / automated / queued**) are derived from the
+portal's own state plus this run's audit log on every redraw, so they always reconcile:
+`total = pending + automated + queued`. Reseeding the portal in a terminal does not
+desync the dashboard — it rebinds on the next interaction.
 
 **3 — the engine on its own** (optional). It is a standalone CLI and does not need
 Streamlit; this is how it would run from a scheduler.
@@ -208,6 +220,10 @@ python3 src/automation/engine.py \
     --audit  build/audit_log.jsonl
 #  add --headed --slow-mo 400 to watch it drive a visible browser
 ```
+
+If a run fails to start — the portal is down, or chromium will not launch — the engine
+writes one `ENGINE_STARTUP_FAILED` record per job rather than exiting silently, so no
+case is ever lost between the review UI and the audit log.
 
 Progress is JSON lines on stdout; one audit record per case lands in
 `build/audit_log.jsonl`. Everything derived — the audit log, the job files, the

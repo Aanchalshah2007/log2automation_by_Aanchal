@@ -45,6 +45,25 @@
     <h1>発注管理 <span class="count" id="case-count"></span></h1>
 
     <section class="pane">
+      <div class="pane-head">一覧 — 処理待ち一覧</div>
+      <table id="rt-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>社員ID</th><th>氏名</th><th>区分</th>
+            <th>金額</th><th>種別</th><th>ステータス</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="row-note">
+        Rows are selected positionally —
+        <code>#rt-table &gt; tbody &gt; tr:nth-of-type(N) &gt; td:nth-of-type(3)</code>.
+        That is the portal's real contract (no case id appears in the row DOM) and it is
+        carried here on purpose: it is the single most likely thing to break this
+        automation on a real screen.
+      </div>
+    </section>
+    <section class="pane">
       <div class="pane-head">詳細 — <span id="rt-detail-id">—</span>
         <span class="badge" id="rt-detail-status">—</span>
       </div>
@@ -74,25 +93,6 @@
       </div>
     </section>
 
-    <section class="pane">
-      <div class="pane-head">一覧 — 処理待ち一覧</div>
-      <table id="rt-table">
-        <thead>
-          <tr>
-            <th>ID</th><th>社員ID</th><th>氏名</th><th>区分</th>
-            <th>金額</th><th>種別</th><th>ステータス</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div class="row-note">
-        Rows are selected positionally —
-        <code>#rt-table &gt; tbody &gt; tr:nth-of-type(N) &gt; td:nth-of-type(3)</code>.
-        That is the portal's real contract (no case id appears in the row DOM) and it is
-        carried here on purpose: it is the single most likely thing to break this
-        automation on a real screen.
-      </div>
-    </section>
   </main>
 </div>
 

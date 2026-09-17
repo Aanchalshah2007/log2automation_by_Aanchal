@@ -5,12 +5,24 @@
  * #btn-rt-ok. Nothing here is aware that an automation exists.
  */
 
+// Compact mode for when this page is embedded next to the review UI. It only
+// hides the left nav and tightens the table so the ステータス column is visible in a
+// narrow frame — the MOCK banner, the values and the DOM contract are untouched.
+if (new URLSearchParams(location.search).get('embed') === '1') {
+  document.body.classList.add('embed');
+}
+
 let STATE = null;
 let SELECTED = null;   // case_id
 
 async function load() {
   const r = await fetch('/api/state', { cache: 'no-store' });
   STATE = await r.json();
+  // Stamp the serving process onto the DOM. The automation reads this out of the
+  // rendered page, so its audit record proves which portal the BROWSER actually
+  // reached — not which one anybody intended it to reach.
+  document.body.dataset.portalEpoch = STATE.epoch || '';
+  document.body.dataset.portalServer = STATE.server_id || '';
   render();
 }
 

@@ -17,11 +17,13 @@ import json
 import pathlib
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DEFS = REPO / "src" / "automation" / "definitions"
@@ -51,18 +53,35 @@ def portal_state(base_url: str) -> dict | None:
         return None
 
 
-def portal_reset(base_url: str, n: int) -> bool:
+def portal_reset(base_url: str, n: int) -> dict | None:
+    """Reseed the ACTUAL portal server and read the result back from it.
+
+    This is a POST to the portal's own reset endpoint followed by a fresh GET of its
+    state — it resets the process that owns the rows, and then confirms what that
+    process now holds. It never touches Streamlit's own variables; those are dropped
+    separately by rebind() once the new epoch is observed.
+    """
     body = json.dumps({"cases": n}).encode()
     req = urllib.request.Request(base_url.rstrip("/") + "/api/reset", data=body,
                                  headers={"Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=5).read()
-        return True
-    except (urllib.error.URLError, OSError):
-        return False
+        ack = json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+        return None
+    after = portal_state(base_url)          # read it back from the portal itself
+    if after is None:
+        return None
+    return {"epoch": after.get("epoch", ""),
+            "server_id": after.get("server_id", ""),
+            "pid": after.get("pid"),
+            "cases": len(after.get("cases", [])),
+            "committable": sum(1 for c in after.get("cases", [])
+                               if c["row_cells"]["status"] == "未処理"),
+            "ack_server_id": ack.get("server_id", "")}
 
 
-def run_engine(defn_file: str, jobs: list[dict], log_box) -> str:
+def run_engine(defn_file: str, jobs: list[dict], log_box,
+               expect_server: str = "", base_url: str = "") -> str:
     """Run the engine as a subprocess, stream its progress into `log_box`, and
     return the run_id it reported.
 
@@ -73,15 +92,52 @@ def run_engine(defn_file: str, jobs: list[dict], log_box) -> str:
     JOBS.parent.mkdir(parents=True, exist_ok=True)
     JOBS.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
 
-    cmd = [sys.executable, str(REPO / "src" / "automation" / "engine.py"),
-           "--definition", str(DEFS / defn_file),
-           "--jobs", str(JOBS),
-           "--audit", str(AUDIT)]
+    # EVERY path here is a separate LIST ELEMENT and shell=False. Nothing is ever
+    # f-strung into one command string, because this repository lives under
+    # "C:\Users\Aanchal Shah\..." and any string-joined command line splits at that
+    # space. sys.executable — not "python" — so the child is the same interpreter
+    # Streamlit is running on, with the same packages.
+    cmd = [sys.executable,
+           str((REPO / "src" / "automation" / "engine.py").resolve()),
+           "--definition", str((DEFS / defn_file).resolve()),
+           "--jobs", str(JOBS.resolve()),
+           "--audit", str(AUDIT.resolve())]
+    if base_url:
+        # Drive the portal THIS UI is reading, not whatever the definition's
+        # target.base_url happens to say.
+        cmd += ["--base-url", base_url]
+    if expect_server:
+        # The engine abandons the run rather than write to a portal this UI is not
+        # the one reviewing. Two portals once shared 127.0.0.1:5233 (build notes §5c).
+        cmd += ["--expect-server", expect_server]
 
     lines: list[str] = []
     run_id = ""
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", bufsize=1, cwd=str(REPO))
+    proc = subprocess.Popen(cmd, shell=False,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace",
+                            bufsize=1, cwd=str(REPO.resolve()))
+
+    # Drain stderr on its own thread.
+    #
+    # THIS IS THE FIX FOR THE BUG THAT MADE EVERY CASE FAIL. Reading stdout to
+    # completion first and only then calling proc.stderr.read() deadlocks the moment
+    # the child writes more than one pipe buffer (65536 bytes on this kernel) to
+    # stderr: the child blocks in write(), so it stops producing stdout, so the
+    # parent blocks in its stdout loop, so nobody ever drains stderr. Chromium
+    # under WSL reaches 64 KB of stderr easily — Fontconfig, dbus and GPU warnings.
+    # The engine would emit run_start, write the note for no case, and hang; the UI
+    # saw no audit records at all. Reproduced deterministically in a 20-line probe.
+    err_chunks: list[str] = []
+
+    def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            err_chunks.append(line)
+
+    err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    err_thread.start()
 
     STEP_LABEL = {
         "read_row": "reading worklist row",
@@ -89,10 +145,11 @@ def run_engine(defn_file: str, jobs: list[dict], log_box) -> str:
         "read_detail": "reading the detail pane",
         "apply_edits": "applying the reviewer's correction",
         "precheck": "checking the case against the definition",
-        "write_note": "writing the note",
-        "wrote": "wrote",
+        "write_note": "writing the note into #rt-note",
+        "confirming_note": "re-reading the note field…",
+        "note_confirmed": "✓ note confirmed in the DOM",
         "commit": "committing (once, no retry)",
-        "verifying": "verifying…",
+        "verifying": "verifying… re-reading the row's ステータス",
     }
 
     assert proc.stdout is not None
@@ -110,6 +167,9 @@ def run_engine(defn_file: str, jobs: list[dict], log_box) -> str:
             lines.append(f"_run `{run_id}` · definition `{ev['definition']}` "
                          f"v{ev['definition_version']} · {ev['n']} case(s) · "
                          f"LLM in runtime: **{ev['llm_in_runtime']}**_")
+        elif ev["ev"] == "portal_identity":
+            lines.append(f"&nbsp;&nbsp;_portal `{ev['portal_server_id']}` "
+                         f"epoch `{ev['portal_epoch']}` at {ev['url']}_")
         elif ev["ev"] == "step":
             label = STEP_LABEL.get(ev["step"], ev["step"])
             extra = f" — `{ev['detail']}`" if ev.get("detail") else ""
@@ -129,45 +189,109 @@ def run_engine(defn_file: str, jobs: list[dict], log_box) -> str:
 
         log_box.markdown("\n\n".join(lines[-26:]))
 
-    err = (proc.stderr.read() if proc.stderr else "") or ""
     proc.wait()
+    err_thread.join(timeout=5)
+    err = "".join(err_chunks)
     if proc.returncode != 0:
-        st.error(f"engine exited {proc.returncode}\n\n```\n{err[-2500:]}\n```")
+        st.error(f"The automation engine exited with code {proc.returncode} and "
+                 f"processed nothing. No case was marked handled.\n\n"
+                 f"```\n{err[-2500:]}\n```")
+    elif not run_id:
+        st.error("The automation engine produced no run — nothing was written to the "
+                 "portal and no case was marked handled.\n\n"
+                 f"```\n{err[-2500:]}\n```")
     ss.last_log = "\n\n".join(lines)
     return run_id
 
 
-def read_audit(run_id: str) -> list[dict]:
-    """The audit records this run wrote, in order. The log itself is append-only
-    and outlives the session, so it is always filtered by run_id."""
-    if not AUDIT.exists() or not run_id:
+def read_audit(*, run_id: str = "", portal_epoch: str = "") -> list[dict]:
+    """Audit records, filtered by run or by the portal worklist they were written
+    against. The log is append-only and outlives every browser session."""
+    if not AUDIT.exists() or not (run_id or portal_epoch):
         return []
     out = []
     for line in AUDIT.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        r = json.loads(line)
-        if r.get("run_id") == run_id:
-            out.append(r)
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if run_id and r.get("run_id") != run_id:
+            continue
+        if portal_epoch and r.get("portal_epoch") != portal_epoch:
+            continue
+        out.append(r)
     return out
 
 
-def dispatch(defn_file: str, jobs: list[dict], log_box) -> None:
-    """Run the jobs, fold the resulting audit records into the session, and mark
-    the cases handled."""
-    run_id = run_engine(defn_file, jobs, log_box)
-    ss.records += read_audit(run_id)
-    ss.handled |= {j["case_id"] for j in jobs}
+def dispatch(defn_file: str, jobs: list[dict], log_box,
+             expect_server: str = "", base_url: str = "") -> None:
+    """Run the jobs and fold the resulting audit records into the session.
+
+    A case counts as handled only if the engine actually returned a record for it.
+    The previous version marked every dispatched case handled unconditionally, so a
+    run that died on startup made 18 cases vanish from the dashboard while the portal
+    still held them — the state desync in build notes §5.2. The audit log is the one
+    source of truth about what happened to a case; this function no longer guesses.
+    """
+    run_id = run_engine(defn_file, jobs, log_box, expect_server, base_url)
+    got = read_audit(run_id=run_id)
+    # Re-derive the whole decided set from the log for the worklist the portal is
+    # currently serving, rather than appending to a session-local list. A browser
+    # reload therefore cannot forget work already done to this worklist and offer
+    # an already-committed case for approval again.
+    ss.records = read_audit(portal_epoch=ss.epoch) if ss.epoch else got
+    missing = {j["case_id"] for j in jobs} - {r["case_id"] for r in got}
+    if missing:
+        st.warning(f"{len(missing)} case(s) came back with no result and were left "
+                   f"pending: {', '.join(sorted(missing))}")
 
 
 # ---------------------------------------------------------------- state
+#
+# ONE SOURCE OF TRUTH, in two halves that cannot drift apart:
+#   * the PORTAL owns the cases and their statuses. Nothing is cached here.
+#   * the AUDIT LOG owns what happened to each case. `ss.records` holds this
+#     demo's slice of it, and `decided()` derives everything else from it.
+#
+# There is deliberately no separate "handled" set any more. The old one was a
+# third opinion that could disagree with both, and did: a run that failed on
+# startup added 18 ids to it while producing no records, so the dashboard showed
+# an empty system while the portal still held 18 未処理 cases. Counters are now
+# computed from state on every rerun and are never carried across one.
 ss = st.session_state
-ss.setdefault("records", [])        # audit records produced in this session
-ss.setdefault("handled", set())     # case_ids already sent to the engine
+ss.setdefault("records", [])        # audit records produced in this demo
+ss.setdefault("epoch", None)        # the portal worklist this demo is bound to
 ss.setdefault("editing", None)
 ss.setdefault("shown_at", {})
 ss.setdefault("edits", {})
 ss.setdefault("last_log", "")
+ss.setdefault("reset_note", "")
+
+
+def decided() -> dict[str, dict]:
+    """case_id -> the latest audit record for it in this demo."""
+    out: dict[str, dict] = {}
+    for r in ss.records:
+        out[r["case_id"]] = r
+    return out
+
+
+def rebind(epoch: str) -> None:
+    """Bind this session to a worklist and drop everything from the previous one.
+
+    Called whenever the portal's epoch differs from ours — which covers pressing
+    Reset in the sidebar, restarting server.py in a terminal, and reconnecting a
+    browser tab to a portal that was reseeded while the tab was closed.
+    """
+    ss.epoch = epoch
+    # The audit log — not session memory — says what has happened to this worklist.
+    ss.records = read_audit(portal_epoch=epoch) if epoch else []
+    ss.editing = None
+    ss.shown_at = {}
+    ss.edits = {}
+    ss.last_log = ""
 
 
 # ---------------------------------------------------------------- sidebar
@@ -202,13 +326,18 @@ with st.sidebar:
     st.divider()
     base_url = st.text_input("mock portal", defn["target"]["base_url"])
     n_seed = st.number_input("cases to seed on reset", 5, 60, 18)
-    if st.button("Reset portal & session", use_container_width=True):
-        if portal_reset(base_url, int(n_seed)):
-            ss.records, ss.handled, ss.editing = [], set(), None
-            ss.shown_at, ss.edits = {}, {}
+    if st.button("RESET DEMO", use_container_width=True, type="secondary"):
+        res = portal_reset(base_url, int(n_seed))
+        if res:
+            rebind(res["epoch"])   # the portal reseeded; bind to the new worklist
+            ss.reset_note = (f"Portal `{res['server_id']}` (pid {res['pid']}) reseeded: "
+                             f"{res['cases']} cases, {res['committable']} in 未処理.")
             st.rerun()
         else:
             st.error("portal is not answering — start it first (see README)")
+
+    if ss.reset_note:
+        st.caption(ss.reset_note)
 
     st.divider()
     st.caption("No LLM runs anywhere in this prototype. "
@@ -218,6 +347,8 @@ with st.sidebar:
 
 # ---------------------------------------------------------------- header
 st.title("発注管理 — human-in-the-loop automation")
+st.caption("You approve a case · a deterministic script fills the portal and verifies the "
+           "write · anything it cannot verify goes to a human. No AI model at runtime.")
 
 state = portal_state(base_url)
 if state is None:
@@ -227,22 +358,72 @@ if state is None:
     )
     st.stop()
 
-with st.expander("What is real here, and what is not — read this first", expanded=False):
-    st.markdown(f"""
-| | |
-|---|---|
-| **Genuinely works end to end** | the engine (read → precheck → write → commit once → **verify by read-back**), the approve / edit / flag loop, the exception queue, the audit log, the relative time-saved figure |
-| **Mocked** | the portal itself. There is no access to the client's system. The *structure* — columns, field names, status vocabulary, note template, the `#rt-table` / `#rt-note` / `#btn-rt-ok` selector contract — is recovered from dataset B's logs. |
-| **Synthetic** | every case value on screen. The real values were never logged: clipboard events carry a length, not a payload. |
-| **Still manual after deployment** | everything in the exception queue, every flagged case, and the final sign-off on whether a queued case should be forced through |
-| **Designed, not observed** | the whole failure branch. Dataset B has 684 cases and 0 failures (step 2 §7.5), so the portal's real error behaviour is unknown. The rule is: commit once, verify, and stop. |
-""")
+# Bind to the worklist the portal is actually serving. If it has been reseeded —
+# by the RESET button, or by someone restarting server.py in a terminal — this
+# session's records belong to a worklist that no longer exists, so they go. This
+# is the check that makes "the dashboard is empty but the portal has 18 cases"
+# impossible rather than merely unlikely.
+portal_epoch = state.get("epoch", "")
+portal_server_id = state.get("server_id", "")
+if ss.epoch != portal_epoch:
+    stale = bool(ss.records)
+    rebind(portal_epoch)
+    if stale:
+        st.info("The portal was reseeded, so this dashboard reloaded from it. "
+                "Counters below are for the worklist the portal is holding now.")
 
 # ---------------------------------------------------------------- counters
+# DERIVED, on this rerun, from two authoritative sources and nothing else:
+#   * the PORTAL's live state  -> which cases exist and what status each row holds
+#   * the AUDIT LOG            -> what the automation attempted and what happened
+# No counter is ever incremented or decremented. `automated` additionally requires
+# the portal to AGREE that the row reached its committed status, so an audit record
+# alone can never inflate it.
+cases = state["cases"]
+status_now = {c["case_id"]: c["row_cells"]["status"] for c in cases}
+committed_status = defn["row_schema"]["status"]["expect_after_commit"]
+committable_from = defn["row_schema"]["status"]["commit_allowed_from"]
+
+verdicts = decided()
+total = len(cases)
+
+automated_ids = {
+    cid for cid, r in verdicts.items()
+    if r["outcome"] == "automated" and status_now.get(cid) == committed_status
+}
+queued_ids = {cid for cid, r in verdicts.items() if r["outcome"] == "queued"}
+# An audit record claiming success that the portal does not corroborate is a real
+# disagreement, not a counter to quietly round off. It is surfaced, never hidden.
+disputed_ids = {
+    cid for cid, r in verdicts.items()
+    if r["outcome"] == "automated" and cid not in automated_ids
+}
+decided_ids = automated_ids | queued_ids | disputed_ids
+pending_cases = [c for c in cases if c["case_id"] not in decided_ids]
+
 records = ss.records
-processed = len(records)
-automated = sum(1 for r in records if r["outcome"] == "automated")
-queued = sum(1 for r in records if r["outcome"] == "queued")
+automated = len(automated_ids)
+queued = len(queued_ids)
+pending = len(pending_cases)
+processed = automated + queued + len(disputed_ids)
+committable = sum(1 for c in cases if c["row_cells"]["status"] in committable_from)
+
+if disputed_ids:
+    st.error(
+        f"**State disagreement.** {len(disputed_ids)} case(s) are recorded as automated "
+        f"in the audit log but the portal does not show them as {committed_status}: "
+        f"{', '.join(sorted(disputed_ids))}. They are counted as neither automated nor "
+        f"queued. This usually means the engine drove a different portal process than "
+        f"this dashboard is reading."
+    )
+
+# The invariant, checked every redraw and shown rather than asserted away.
+if total != pending + automated + queued + len(disputed_ids):
+    st.error(
+        f"**Counter invariant violated**: worklist {total} != awaiting {pending} + "
+        f"automated {automated} + queued {queued} + disputed {len(disputed_ids)}. "
+        f"The numbers below are not trustworthy; press RESET DEMO."
+    )
 
 baseline_s = float(defn["baseline"]["median_manual_cycle_s"])
 auto_s = sum(r.get("automation_seconds", 0.0) for r in records)
@@ -253,72 +434,105 @@ review_s = sum(r.get("review_seconds", 0.0) for r in records)
 # cycle is what makes the exception count cost something in this number.
 before_s = baseline_s * processed
 after_s = (
-    sum(r.get("automation_seconds", 0.0) + r.get("review_seconds", 0.0)
-        for r in records if r["outcome"] == "automated")
-    + sum(r.get("review_seconds", 0.0) + baseline_s
-          for r in records if r["outcome"] == "queued")
+    sum(verdicts[cid].get("automation_seconds", 0.0)
+        + verdicts[cid].get("review_seconds", 0.0) for cid in automated_ids)
+    + sum(verdicts[cid].get("review_seconds", 0.0) + baseline_s
+          for cid in queued_ids | disputed_ids)
 )
 pct = (1 - after_s / before_s) * 100 if before_s else 0.0
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Cases processed", processed)
+c0, c1, c2, c3, c4 = st.columns(5)
+c0.metric("IN WORKLIST", total)
+c1.metric("AWAITING REVIEW", pending)
 c2.metric("AUTOMATED", automated)
 c3.metric("QUEUED FOR HUMAN", queued,
           delta=None if not queued else f"{queued} need a person",
           delta_color="inverse")
-c4.metric("Hands-on time removed", f"≈{pct:.0f}%" if processed else "—",
-          help="relative, not absolute — see the note below")
+c4.metric("HANDS-ON TIME REMOVED", f"\u2248{pct:.0f}% (relative)" if processed else "\u2014")
 
-st.caption(
-    f"**Time-saved basis.** before = median manual cycle **{baseline_s:g}s** × {processed} cases "
-    f"(MEASURED: `reports/step2_process_metrics.csv`, 77 observed executions). "
-    f"after = automated cases at (engine {auto_s:.1f}s + review {review_s:.1f}s) + queued cases "
-    f"charged the full manual cycle, because a queued case still has to be done by hand. "
-    f"**Reported as a ratio on purpose.** The {baseline_s:g}s baseline comes from a "
-    f"test-environment recording whose dwell is ≈1.4× compressed, and this mock's own "
-    f"seconds are not on that clock at all. The two distortions push in opposite directions "
-    f"and neither is invertible, so this is a demo figure. Do not multiply it by a headcount "
-    f"or an hourly rate."
-)
+# The honesty content, compressed into one collapsed expander — not softened, not
+# removed. The MOCK notice, the real/mocked/synthetic table, the MEASURED vs
+# ASSUMPTION tags and the full relative-ROI basis are all still here, one click away.
+with st.expander("What\u2019s real here / what\u2019s mocked \u2014 click to read",
+                 expanded=False):
+    st.markdown("""
+| | |
+|---|---|
+| **Genuinely works end to end** | the engine (read \u2192 precheck \u2192 write note \u2192 **confirm the note landed** \u2192 commit once \u2192 **verify by reading the row back**), the approve / edit / flag loop, the exception queue, the audit log, the relative time-saved figure |
+| **[MOCKED]** | the portal itself. There is no access to the client\u2019s system. The *structure* \u2014 columns, field names, status vocabulary, note template, the `#rt-table` / `#rt-note` / `#btn-rt-ok` selector contract \u2014 is **[MEASURED]**, recovered from dataset B\u2019s logs. |
+| **[MOCKED] Synthetic values** | every case value on screen is invented. The real values were never logged: clipboard events carry a length, not a payload. |
+| **Still manual after deployment** | everything in the exception queue, every flagged case, and the final sign-off on whether a queued case should be forced through |
+| **[ASSUMPTION] Designed, not observed** | the whole failure branch. Dataset B has 684 cases and **0 failures** (step 2 \u00a77.5), so the portal\u2019s real error behaviour is unknown. The rule is: commit once, verify, and stop. |
+
+**Four of the eighteen seeded cases are deliberately unautomatable** and must end up in
+the exception queue rather than in the portal. That number is the point of the demo, not
+a defect.
+""")
+    st.markdown(
+        f"**Time-saved basis \u2014 relative, never absolute.** "
+        f"before = median manual cycle **{baseline_s:g}s** \u00d7 {processed} cases "
+        f"(**[MEASURED]**: `reports/step2_process_metrics.csv`, 77 observed executions). "
+        f"after = automated cases at (engine {auto_s:.1f}s + review {review_s:.1f}s) "
+        f"+ queued cases charged the full manual cycle, because a queued case still has "
+        f"to be done by hand \u2014 which is why exceptions cost something here. "
+        f"The {baseline_s:g}s baseline comes from a test-environment recording whose dwell "
+        f"is \u22481.4\u00d7 compressed, and this mock\u2019s own seconds are not on that "
+        f"clock at all. The two distortions push in opposite directions and neither is "
+        f"invertible, so this is a demo figure: **do not multiply it by a headcount or an "
+        f"hourly rate.**"
+    )
+    st.caption(f"{total} in the worklist = {pending} awaiting review + {automated} "
+               f"automated + {queued} queued \u2014 recomputed from the portal\u2019s own "
+               f"state and this run\u2019s audit log on every redraw. "
+               f"`automated` additionally requires the portal to show "
+               f"{committed_status}. Authoritative portal: `{portal_server_id}` "
+               f"epoch `{portal_epoch}` at {base_url} \u00b7 {committable} row(s) "
+               f"currently committable.")
+
 if processed and pct < 0:
-    st.caption("The figure is negative because the cases handled so far are mostly "
-               "exceptions. That is the metric working: a case that is reviewed and then "
-               "queued costs the reviewer's time *and* still has to be done by hand.")
+    st.caption("Negative because the cases handled so far are mostly exceptions \u2014 "
+               "a reviewed-then-queued case costs review time *and* still has to be "
+               "done by hand.")
 
 st.divider()
 
 # ---------------------------------------------------------------- queue
-cases = state["cases"]
-pending = [c for c in cases
-           if c["row_cells"]["status"] == "未処理" and c["case_id"] not in ss.handled]
-# A case already in a terminal status is not pending, but one seeded row starts in
-# 完了 on purpose. Surface it, because the engine has to refuse it.
-blocked = [c for c in cases
-           if c["row_cells"]["status"] != "未処理" and c["case_id"] not in ss.handled
-           and c["case_id"] not in {r["case_id"] for r in records}]
-
-left, right = st.columns([3, 2], gap="large")
+# "Pending" means "this demo has not decided about it yet" — NOT "the row is 未処理".
+# One seeded row starts in 完了 and must still be reviewed and then refused by the
+# engine, so status is the engine's business, not the queue's.
+left, right = st.columns([0.88, 1.12], gap="large")
 
 with left:
-    st.subheader("Pending cases")
-    st.caption(f"{len(pending)} awaiting review · reviewed one at a time, then the rest "
-               f"as a batch")
-    if blocked:
-        st.caption(f"{len(blocked)} further case(s) are not in 未処理 and are included in "
-                   f"the batch on purpose — the engine has to refuse them rather than "
-                   f"commit over a row that is already closed.")
+    st.subheader("① The case you are reviewing")
+    st.caption(f"{pending} of {total} left · every value below is read live from the "
+               f"portal's DOM (see `source`)")
 
     log_box = st.empty()
 
-    if not pending and not blocked:
-        st.success("Nothing pending. Reset the portal from the sidebar to run the demo again.")
+    # PART E GUARD — read from the LIVE portal, not from any session variable.
+    # A portal whose rows are all committed cannot produce a legitimate demo: every
+    # job would be refused with STATUS_NOT_COMMITTABLE and the run would report
+    # "0 automated, 18 queued, negative saving". That is a spent portal, not a result,
+    # so the engine is not launched at all.
+    if committable == 0:
+        st.warning("Nothing committable — press RESET DEMO first")
+        st.caption(f"The portal at {base_url} holds {total} rows and none is in "
+                   f"{'/'.join(committable_from)}. Server `{portal_server_id}`.")
 
-    if pending:
-        case = pending[0]
+    if not pending_cases:
+        st.success("Every case in the worklist has been decided. "
+                   "Press **RESET DEMO** in the sidebar to run it again.")
+
+    if pending_cases and committable > 0:
+        case = pending_cases[0]
         cid = case["case_id"]
         ss.shown_at.setdefault(cid, time.time())
 
-        st.markdown(f"#### `{cid}` — row {case['row']}")
+        st.markdown(
+            f"#### `{cid}` — worklist row {case['row']}\n"
+            f"{case['detail']['name'] or '—'} · {case['row_cells']['kubun']} · "
+            f"{case['row_cells']['amount']} · currently **{case['row_cells']['status']}**"
+        )
 
         detail = dict(case["detail"])
         overrides = ss.edits.get(cid, {})
@@ -342,17 +556,14 @@ with left:
                     "source": f"worklist row (DOM, td:nth-of-type({idx}))",
                     "edited": "",
                 })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
-
         composed_src = {**detail, **overrides}
         try:
             preview = defn["write"]["template"].format(**composed_src)
         except (KeyError, IndexError):
             preview = "(cannot compose — a template field is missing)"
         st.markdown("**Will be written to `#rt-note`** &nbsp; "
-                    "<span style='color:#6b7684'>source: derived — "
-                    "`write.template` applied to the fields above</span>",
-                    unsafe_allow_html=True)
+                    "<span style='color:#6b7684'>the only composed value: "
+                    "`reason` in a fixed template</span>", unsafe_allow_html=True)
         st.code(preview, language=None)
 
         if editing:
@@ -371,19 +582,22 @@ with left:
                     job = {"case_id": cid, "row": case["row"], "action": "approve",
                            "overrides": new, "reviewed_by": "reviewer",
                            "review_seconds": round(time.time() - ss.shown_at[cid], 2)}
-                    dispatch(defn_file, [job], log_box)
+                    dispatch(defn_file, [job], log_box, portal_server_id, base_url)
                     st.rerun()
                 if cols[1].form_submit_button("Cancel", use_container_width=True):
                     ss.editing = None
                     st.rerun()
         else:
+            st.subheader("② Your decision")
+            st.caption("Nothing is written until you press one. "
+                       "EDIT corrects a value first — the corrected value is what commits.")
             b1, b2, b3 = st.columns(3)
             if b1.button("APPROVE", type="primary", use_container_width=True,
                          key=f"ap_{cid}"):
                 job = {"case_id": cid, "row": case["row"], "action": "approve",
                        "overrides": overrides, "reviewed_by": "reviewer",
                        "review_seconds": round(time.time() - ss.shown_at[cid], 2)}
-                dispatch(defn_file, [job], log_box)
+                dispatch(defn_file, [job], log_box, portal_server_id, base_url)
                 st.rerun()
             if b2.button("EDIT", use_container_width=True, key=f"ed_{cid}"):
                 ss.editing = cid
@@ -393,37 +607,63 @@ with left:
                        "flag_reason": "flagged by the reviewer — not automated",
                        "reviewed_by": "reviewer",
                        "review_seconds": round(time.time() - ss.shown_at[cid], 2)}
-                dispatch(defn_file, [job], log_box)
+                dispatch(defn_file, [job], log_box, portal_server_id, base_url)
                 st.rerun()
 
+        st.caption("Every field, and where it was read from")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
     st.divider()
-    rest = [c for c in pending[1:]] if pending else []
-    rest += blocked
+    # The batch covers everything still undecided, including the case on screen.
+    rest = list(pending_cases)
     if rest:
-        if st.button(f"▶ Run remaining {len(rest)} as batch", use_container_width=True):
+        if st.button(f"▶ Run remaining {len(rest)} as batch", use_container_width=True,
+                     disabled=committable == 0):
             jobs = [{"case_id": c["case_id"], "row": c["row"], "action": "approve",
                      "overrides": {}, "reviewed_by": "batch", "review_seconds": 0.0}
                     for c in rest]
-            dispatch(defn_file, jobs, log_box)
+            dispatch(defn_file, jobs, log_box, portal_server_id, base_url)
             st.rerun()
-        st.caption("Batch cases get no individual review, so they are charged 0 review "
-                   "seconds — and the seeded failures in them still land in the queue.")
+        st.caption("Batch cases get no individual review, so they cost 0 review seconds.")
 
     if ss.last_log:
-        with st.expander("Engine trace — last run", expanded=False):
+        st.markdown("##### Engine trace")
+        st.caption("Every step the script took, as it reported it.")
+        with st.container(height=260):
             st.markdown(ss.last_log)
 
 with right:
-    st.subheader("Exception queue")
+    st.subheader("③ The portal, live")
+    if pending_cases:
+        st.caption(f"← the engine fills this portal now · **watch row "
+                   f"{pending_cases[0]['row']}** flip 未処理 → 登録済み")
+    else:
+        st.caption("← the live portal the engine drove · synthetic values, measured structure")
+
+    # "Did the portal actually change?" — answered by pointing at the row, not by prose.
+    last = ss.records[-1] if ss.records else None
+    if last and last["outcome"] == "automated":
+        st.success(f"**Row {last['row']} changed: {last['status_before']} → "
+                   f"{last['status_after']}**, confirmed by reading the row back.")
+    elif last and last["outcome"] == "queued":
+        st.warning(f"**Row {last['row']} did not change — correct.** Stopped at "
+                   f"*{last['stage']}* (`{last['code']}`), "
+                   f"{last['commit_attempts']} commit attempt(s).")
+
+    components.iframe(base_url.rstrip("/") + "/?embed=1", height=700, scrolling=True)
+
+
+    st.divider()
+    st.subheader("④ Exception queue")
     q = [r for r in records if r["outcome"] == "queued"]
-    if not q:
-        st.caption("Empty. Cases arrive here when the definition does not recognise "
-                   "something, or when the verify read-back does not confirm the write.")
+    st.caption("Empty — nothing was refused yet." if not q else
+               f"{len(q)} case(s) not automated · each one is now manual work.")
     for r in q:
-        st.error(f"**{r['case_id']}** · `{r['code']}` (at *{r['stage']}*)\n\n"
+        st.error(f"**{r['case_id']}** (row {r['row']}) · `{r['code']}` (at *{r['stage']}*)\n\n"
                  f"{r['detail']}\n\n"
                  f"commit attempts: **{r['commit_attempts']}** · "
-                 f"verify: **{r['verify_confirmed']}**")
+                 f"verify confirmed: **{r['verify_confirmed']}**")
 
     st.subheader("Automated")
     a = [r for r in records if r["outcome"] == "automated"]
@@ -441,9 +681,7 @@ with right:
 # ---------------------------------------------------------------- audit
 st.divider()
 st.subheader("Audit log")
-st.caption("One record per case: what was read out of the DOM, what the reviewer "
-           "changed, what was written, whether a commit was attempted and how many "
-           "times, whether the read-back confirmed it, and when.")
+st.caption("One record per case — read, edited, written, committed, verified, timed.")
 if records:
     st.dataframe(
         [{"time": time.strftime("%H:%M:%S", time.localtime(r["started_at"])),

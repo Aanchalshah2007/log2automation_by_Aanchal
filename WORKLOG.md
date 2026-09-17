@@ -371,3 +371,193 @@ disagreed rather than quoting the 1.00, splitting the sources by *document* rath
 writing the 57 uncommitted cases down instead of leaving them out, and keeping the
 defensive error design tagged as an assumption rather than presenting it as something the
 data told me.
+
+
+## Day 5,6 - 2026-09-17 & 2026-09-18
+
+### Step 3 - From feasibility to a working automation
+
+After completing the Step-2 feasibility audit, I moved from measuring the workflow to proving that `fin_purchase_order_management` could actually be automated. I deliberately chose a deterministic, configuration-driven automation rather than introducing an LLM into the runtime path. The objective was to build the smallest system that could demonstrate the measured workflow end-to-end while remaining auditable and safe around failures.
+
+The core workflow was reduced to:
+
+`REVIEW → APPROVE / EDIT / FLAG → SELECT CASE → WRITE FIELD → COMMIT → RE-READ → VERIFY → DONE / HUMAN EXCEPTION`
+
+This kept the automation aligned with the observed interaction motif rather than building unnecessary generality.
+
+### Mock portal and realistic interaction contract
+
+I built a one-screen Japanese `発注管理` portal containing a worklist and detail pane. The underlying case values are synthetic because the original logs do not expose the actual business values.
+
+The portal deliberately preserves the fragile interaction characteristics identified during Step 1, including positional row selectors such as `tr:nth-of-type(N)`. This makes the prototype test the actual automation contract identified from the logs rather than an artificially clean DOM.
+
+The automation definition is configuration-driven, with selectors and field mappings separated from the execution engine. This makes the engine reusable without turning the prototype into a generic autonomous browser agent.
+
+### Human-in-the-loop design
+
+I did not treat every case as automatically executable.
+
+The Streamlit layer provides three explicit decisions:
+
+- **APPROVE** — execute the proposed action.
+- **EDIT** — modify the proposed value before execution.
+- **FLAG** — route the case to a human exception queue.
+
+I also added per-field source indicators and compact execution status so that an evaluator can understand the workflow without reading the implementation.
+
+The main UI was intentionally kept lightweight. Detailed methodology, assumptions, synthetic-data disclosure, and limitations were moved into a collapsed honesty section so that transparency is preserved without turning the demo into a report.
+
+### Designing for the failure mode the data could not show
+
+The Step-2 logs showed **0 observed in-case portal failures across 684 cases**, so the logs could not tell me how a real portal would behave when a commit fails, a field is rejected, or verification disagrees.
+
+Rather than pretending that this behaviour was measured, I implemented it as an explicit engineering assumption:
+
+**commit once → re-read → verify → stop on uncertainty → human exception**
+
+The engine never blindly retries a failed or ambiguous commit. This prevents a verification problem from becoming a potential double-submission.
+
+I also added explicit startup and server-mismatch failures so that an infrastructure problem cannot silently appear as a successful business transaction.
+
+### Debugging the system exposed problems that offline analysis could not
+
+The first end-to-end implementation revealed several issues that were not visible in the event analysis.
+
+The Streamlit subprocess initially deadlocked because Chromium generated enough stderr output to fill the pipe while the parent process was waiting on stdout. I fixed this by draining stderr independently.
+
+The next issue was Windows-specific: the Python executable path contains a space because of the local username. A POSIX-style `execv` re-execution approach therefore failed on Windows. I removed the re-exec mechanism and kept process launching in normal list form using `sys.executable` with `shell=False`.
+
+Japanese text then exposed another environment-specific issue: Windows `cp1252` could not encode the portal's Japanese output. The portal and engine were switched to explicit UTF-8 handling.
+
+These were useful failures because they demonstrated that a workflow can be logically correct while still being operationally unreliable.
+
+### The major architectural bug - two portals, two realities
+
+The most important bug was a state-consistency problem rather than an automation problem.
+
+Two portal processes could initially bind to port 5233 because of Windows socket reuse behaviour. Since the mock portal stored state in memory, the two processes had different `_STATE` objects. This meant the UI, browser, and automation engine could potentially observe different versions of reality.
+
+I treated this as an architectural issue rather than patching individual symptoms.
+
+The final design establishes the portal as the **single source of truth**:
+
+- Only one portal instance can bind to the target port.
+- Startup performs a pre-bind check.
+- The portal exposes a unique `server_id`.
+- Streamlit reads live portal state rather than maintaining an independent case state.
+- The engine is pinned to the same `base_url` and expected `server_id`.
+- RESET is performed through the portal itself.
+- UI counters are derived from portal state plus the audit log.
+- An automation is only counted as successful when the portal corroborates the resulting state.
+
+This eliminated the possibility of the UI saying "automated" while the actual portal remained unchanged.
+
+### Preventing false state after refresh or restart
+
+An earlier Streamlit implementation used a session-local `handled` set. This created a subtle failure mode: if the application restarted after an automation, it could forget what had already been processed and offer the same case again.
+
+I removed the session-local state as the authority.
+
+Instead, the application reconstructs the current decision from **live portal state + audit records**. This makes the system restart-aware and avoids treating Streamlit memory as transactional state.
+
+I also added an invariant check:
+
+**Total = Pending + Automated + Human Queue**
+
+so that counter inconsistencies become an explicit error rather than silently producing misleading UI.
+
+### Guarding the exhausted state
+
+I added a specific guard for the case where no `未処理` cases remain.
+
+Instead of spawning an automation process that has nothing to do, the UI displays:
+
+**"Nothing committable — press RESET DEMO first"**
+
+and disables batch execution.
+
+This prevents a common demo failure: repeatedly pressing "Run" after the dataset has already been exhausted and accidentally generating misleading execution results.
+
+### End-to-end verification
+
+I tested the complete system from a fresh portal reset rather than validating individual components independently.
+
+The fresh portal contained:
+
+**18 total cases → 17 `未処理` + 1 `完了`**
+
+Three cases were intentionally configured to exercise exception behaviour, meaning the expected automatable population was 14.
+
+I first tested a single live approval and verified:
+
+`未処理 → 登録済み`
+
+The note was written, the resulting value was re-read successfully, exactly one commit was attempted, and the portal `server_id` matched the server expected by the automation engine.
+
+I then performed three live approvals before running the remaining cases in batch. This provided a visible demonstration of both the human-review path and the automated path.
+
+The final result was:
+
+- **18 total cases**
+- **14 automated**
+- **4 human exceptions**
+- **0 awaiting**
+- **~56% relative hands-on-time reduction**
+
+The portal itself independently reported:
+
+`14 登録済み / 3 未処理 / 1 完了`
+
+The three remaining `未処理` cases correspond to the seeded failure conditions rather than silently disappearing.
+
+### Testing the verification-failure path
+
+I specifically tested `P10-07054374-017` as a verification failure.
+
+The result was:
+
+- `commit_attempts = 1`
+- `note_confirmed = True`
+- `verify_confirmed = False`
+- Portal status remained `未処理`
+- No retry was issued
+
+This was important because the system did not equate **"I clicked commit"** with **"the business transaction succeeded."**
+
+The transaction is only considered automated when the expected portal state can be verified.
+
+### Cross-session validation
+
+I opened a fresh browser session against the already-used portal and reproduced the same state:
+
+**14 automated / 4 human queue / ~56% relative time reduction**
+
+This verified that the result was not merely being held in Streamlit's session state.
+
+The accounting invariant also held:
+
+**18 = 0 awaiting + 14 automated + 4 human queue**
+
+### What I deliberately did not build
+
+I deliberately avoided adding an LLM, autonomous selector recovery, speculative retry logic, or unnecessary external integrations.
+
+The logs already provided enough evidence to build a deterministic happy-path automation for this process. Adding an LLM would have increased complexity and reduced determinism without solving an observed problem.
+
+Similarly, the original logs did not provide enough information to safely define real failure semantics or production governance. Those remain explicit assumptions/open questions rather than features disguised as completed functionality.
+
+### AI Usage
+
+Claude Code was used as an implementation and debugging assistant. It helped develop the mock portal, Playwright engine, Streamlit interface, process handling, and verification logic, and helped inspect runtime failures.
+
+The engineering decisions remained mine: selecting the deterministic architecture, deciding that the portal should be the single source of truth, identifying the duplicate-process issue as an architectural state problem, refusing blind retries, separating measured findings from engineering assumptions, and deciding what **not** to automate.
+
+The final quantitative claims were validated through the actual end-to-end execution rather than inferred from the interface.
+
+### Result
+
+By the end of Day 4, Step 3 had moved from a feasibility claim to a **working, observable, failure-aware prototype**:
+
+**Measured workflow → deterministic automation → human review → portal action → independent verification → auditable outcome**
+
+The prototype does not claim to be production-ready. Its purpose is to demonstrate that the highest-value measured workflow can be automated with controlled execution, explicit uncertainty handling, and a clear boundary between what the data proves and what engineering assumptions are required.

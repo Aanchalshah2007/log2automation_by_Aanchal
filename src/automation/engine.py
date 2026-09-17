@@ -45,12 +45,29 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
 # --------------------------------------------------------------------------
-# Environment shim.
-# Playwright's chromium needs a handful of system libraries. On a machine where
-# they cannot be apt-installed, `setup_browser.sh` unpacks them under
-# build/pwdeps/ and this re-exec puts them on the loader path. No-op otherwise.
+# Environment shim — Linux only.
+#
+# Playwright's chromium needs a handful of system libraries. On a Linux box where
+# they cannot be apt-installed, `setup_browser.sh` unpacks them under build/pwdeps/
+# and this puts them on the loader path. Chromium is launched as a CHILD process and
+# inherits os.environ at spawn time, so setting the variable here is enough.
+#
+# An earlier version also called os.execv() to re-exec the interpreter with the new
+# environment. That was never necessary (verified: the child picks the variable up
+# without it) and it was actively harmful on Windows, where os.execv does not exec —
+# the CRT joins the argument list into one unquoted command line, so an interpreter
+# path containing a space is split at the space. On a machine whose user folder is
+# "Aanchal Shah" that produced, verbatim:
+#
+#     C:\Users\Aanchal: can't open file 'C:\...\Shah\AppData\...\python.exe'
+#
+# and the engine never started. `build/pwdeps/` is a Linux artefact but lives on a
+# path Windows can also see, so the shim fired there too. It is now POSIX-gated and
+# there is no exec anywhere in this program.
 # --------------------------------------------------------------------------
 def _ensure_browser_libs() -> None:
+    if os.name != "posix":
+        return
     local = REPO / "build" / "pwdeps" / "root" / "usr" / "lib" / "x86_64-linux-gnu"
     if not local.is_dir():
         return
@@ -58,7 +75,6 @@ def _ensure_browser_libs() -> None:
     if str(local) in current.split(":"):
         return
     os.environ["LD_LIBRARY_PATH"] = f"{local}:{current}".rstrip(":")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 _ensure_browser_libs()
@@ -77,6 +93,17 @@ def rel(path: pathlib.Path) -> str:
         return str(path.resolve().relative_to(REPO))
     except ValueError:
         return str(path.resolve())
+
+
+# Everything this engine prints is Japanese: screen names, statuses, the note itself.
+# A Windows console defaults to cp1252, which cannot encode any of it — the progress
+# stream died with UnicodeEncodeError the first time it tried to report a note. Force
+# UTF-8 on both streams before anything is written.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):   # already wrapped, or not a real stream
+        pass
 
 
 def emit(ev: str, **fields) -> None:
@@ -234,12 +261,28 @@ class Runner:
     def write_note(self, note: str) -> None:
         target = sel(self.d, "note")
         self.page.focus(target)
+        # .fill() sets the value AND dispatches an `input` event, so a portal whose
+        # model is reactive sees the change. Verified against this mock: the field is
+        # a real <textarea> (not contenteditable) and `input` does fire.
         self.page.fill(target, note)
-        written = self.page.input_value(target)
-        if written != note:
-            raise Queue("NOTE_WRITE_MISMATCH",
-                        "the note field does not hold what was written to it",
-                        stage="write_note")
+
+    def confirm_note(self, note: str) -> str:
+        """Re-read the note field and confirm the intended value actually landed.
+
+        Separate from write_note and called immediately before the commit click, so
+        the gap between 'we wrote it' and 'we committed it' is as small as it can be.
+        If this does not hold, the case is queued and **the commit button is never
+        touched** — an empty note would otherwise be rejected by the portal, and a
+        rejection is the one thing this automation must not walk into blind.
+        """
+        target = sel(self.d, "note")
+        seen = self.page.input_value(target)
+        if seen != note:
+            raise Queue("NOTE_NOT_CONFIRMED",
+                        f"the note field holds {seen[:40]!r} after the write, "
+                        f"expected {note[:40]!r} — not committing",
+                        stage="confirm_note")
+        return seen
 
     def commit_once(self) -> None:
         self.page.click(sel(self.d, "commit"))
@@ -290,6 +333,7 @@ def run_case(runner: Runner, job: dict) -> dict:
         "edits": job.get("overrides") or {},
         "read": {},
         "written": None,
+        "note_confirmed": None,
         "commit_attempted": False,
         "commit_attempts": 0,
         "verify_confirmed": None,
@@ -348,8 +392,13 @@ def run_case(runner: Runner, job: dict) -> dict:
         rec["written"] = note
         emit("step", case_id=case_id, step="write_note", detail=note)
         runner.write_note(note)
+
+        # Re-read the field before going anywhere near the commit button.
+        emit("step", case_id=case_id, step="confirming_note",
+             detail="re-reading the note field")
+        rec["note_confirmed"] = bool(runner.confirm_note(note))
         rec["screens"]["wrote"] = runner.shot(case_id, "wrote")
-        emit("step", case_id=case_id, step="wrote", detail=note,
+        emit("step", case_id=case_id, step="note_confirmed", detail=note,
              screenshot=rec["screens"]["wrote"])
 
         emit("step", case_id=case_id, step="commit",
@@ -413,6 +462,12 @@ def main() -> None:
     ap.add_argument("--slow-mo", type=int, default=0,
                     help="ms between actions — use ~400 with --headed for a live demo")
     ap.add_argument("--run-id", default=None)
+    ap.add_argument("--base-url", default=None,
+                    help="portal to drive, overriding the definition's target.base_url; "
+                         "the caller passes the portal it is itself reading")
+    ap.add_argument("--expect-server", default=None,
+                    help="server_id of the portal the caller believes it is driving; "
+                         "the run is abandoned if the browser lands on a different one")
     args = ap.parse_args()
 
     defn = load_definition(pathlib.Path(args.definition))
@@ -423,17 +478,86 @@ def main() -> None:
     audit_path = pathlib.Path(args.audit)
     audit_path.parent.mkdir(parents=True, exist_ok=True)
 
-    url = defn["target"]["base_url"] + defn["target"]["route"]
+    # The caller may pin the portal explicitly. Without this the engine drove
+    # whatever target.base_url said while the review UI could be reading a different
+    # portal entirely — the same "two portals, one demo" class of bug as §5c.
+    base = (args.base_url or defn["target"]["base_url"]).rstrip("/")
+    url = base + defn["target"]["route"]
     emit("run_start", run_id=run_id, definition=defn["definition_id"],
          definition_version=defn["definition_version"], url=url, n=len(jobs),
          llm_in_runtime=False)
 
+    def abandon(reason: str) -> None:
+        """The run could not start. Write one audit record per job rather than
+        none, so the caller can never lose a case to a silent startup failure —
+        which is exactly how an earlier build lost 18 of them (see build notes §5.1).
+        """
+        with audit_path.open("a", encoding="utf-8") as fh:
+            for job in jobs:
+                rec = {
+                    "case_id": job["case_id"], "row": job.get("row"),
+                    "human_action": job.get("action", "approve"),
+                    "reviewed_by": job.get("reviewed_by", "operator"),
+                    "review_seconds": round(float(job.get("review_seconds") or 0.0), 2),
+                    "edits": job.get("overrides") or {}, "read": {}, "written": None,
+                    "note_confirmed": None, "commit_attempted": False,
+                    "commit_attempts": 0, "verify_confirmed": None,
+                    "status_before": None, "status_after": None,
+                    "outcome": QUEUED, "code": "ENGINE_STARTUP_FAILED",
+                    "detail": reason, "stage": "startup", "screens": {},
+                    "automation_seconds": 0.0,
+                    "started_at": time.time(), "ended_at": time.time(),
+                    "run_id": run_id, "definition_id": defn["definition_id"],
+                    "definition_version": defn["definition_version"],
+                    "llm_in_runtime": False,
+                    "portal_epoch": None, "portal_server_id": None,
+                }
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        emit("run_end", run_id=run_id, processed=len(jobs), automated=0,
+             queued=len(jobs), automation_seconds=0.0,
+             review_seconds=0.0, audit=rel(audit_path), startup_failed=reason)
+
     records: list[dict] = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=not args.headed, slow_mo=args.slow_mo)
+        try:
+            browser = pw.chromium.launch(headless=not args.headed, slow_mo=args.slow_mo)
+        except PWError as exc:
+            abandon(f"the browser would not launch: {str(exc).splitlines()[0][:200]}")
+            return
         page = browser.new_page(viewport={"width": 1440, "height": 1100})
-        page.goto(url)
-        page.wait_for_selector(sel(defn, "table"))
+        try:
+            page.goto(url)
+        # Wait for the worklist to be POPULATED, not merely present. `#rt-table`
+        # ships in the static HTML with an empty <tbody> and is filled by the
+        # page's own fetch, so waiting on the table alone returns with zero rows
+        # and every case then fails read_row with ROW_NOT_FOUND. Measured: with
+        # /api/state delayed, `wait_for_selector('#rt-table')` returns at rows=0.
+            ready = defn["selectors"].get("ready") or sel(defn, "row", n=1)
+            page.wait_for_selector(
+                ready, timeout=defn["policy"].get("ready_timeout_ms", 15000))
+        except PWError as exc:
+            browser.close()
+            abandon(f"the worklist at {url} never became ready: "
+                    f"{str(exc).splitlines()[0][:200]}")
+            return
+
+        # Which portal process did the BROWSER actually reach? The page stamps its
+        # server's identity onto <body>, so this is read from the rendered DOM rather
+        # than from a separate API call the browser might not have shared. Two portals
+        # were once bound to one address with different state (build notes §5c); this
+        # is how a run proves which one it drove.
+        portal_epoch = page.evaluate("() => document.body.dataset.portalEpoch || ''")
+        portal_server_id = page.evaluate("() => document.body.dataset.portalServer || ''")
+        emit("portal_identity", url=url, portal_epoch=portal_epoch,
+             portal_server_id=portal_server_id, expected=args.expect_server)
+
+        if args.expect_server and portal_server_id != args.expect_server:
+            browser.close()
+            abandon(f"the browser reached portal {portal_server_id!r} at {url}, but the "
+                    f"caller is reviewing {args.expect_server!r}. Refusing to write to a "
+                    f"portal the reviewer is not looking at.")
+            return
+
         runner = Runner(page, defn, shots)
 
         with audit_path.open("a", encoding="utf-8") as fh:
@@ -443,6 +567,8 @@ def main() -> None:
                 rec["definition_id"] = defn["definition_id"]
                 rec["definition_version"] = defn["definition_version"]
                 rec["llm_in_runtime"] = False
+                rec["portal_epoch"] = portal_epoch
+                rec["portal_server_id"] = portal_server_id
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 fh.flush()
                 records.append(rec)
