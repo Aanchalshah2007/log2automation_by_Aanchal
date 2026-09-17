@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>財務会計システム</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="synthetic-banner">
+  <strong>MOCK.</strong>
+  Reconstructed 発注管理 screen. The <em>structure</em> — column set, field names, status
+  vocabulary, note template and the <code>#rt-table</code> / <code>#rt-note</code> /
+  <code>#btn-rt-ok</code> selector contract — is recovered from dataset&nbsp;B's own logs.
+  Every <em>value</em> below is synthetic: the real values were never recorded
+  (clipboard events carry a length, not a payload).
+</div>
+
+<header id="portal-header">
+  <div class="brand">
+    <span class="mark">財務</span>
+    <div>
+      <div class="sys">財務会計システム</div>
+      <div class="period">2026年度 · 経理部門</div>
+    </div>
+  </div>
+  <div class="persona">佐藤 直樹 · 経理マネージャー</div>
+</header>
+
+<div class="shell">
+  <nav id="portal-nav">
+    <div class="nav-title">財務会計業務</div>
+    <a class="nav-item disabled">ダッシュボード</a>
+    <a class="nav-item disabled">請求書承認・経費精算 <span class="n">12</span></a>
+    <a class="nav-item disabled">経費承認（管理職） <span class="n">12</span></a>
+    <a class="nav-item disabled">支払処理 <span class="n">12</span></a>
+    <a class="nav-item disabled">予算差異分析 <span class="n">12</span></a>
+    <a class="nav-item active" href="#/resident-tax">発注管理 <span class="n" id="nav-count">–</span></a>
+    <div class="nav-foot">Only 発注管理 is in scope for this prototype.<br>
+      The other five screens are the same DOM contract with a different prefix.</div>
+  </nav>
+
+  <main>
+    <div class="crumb">ダッシュボード / 発注管理</div>
+    <h1>発注管理 <span class="count" id="case-count"></span></h1>
+
+    <section class="pane">
+      <div class="pane-head">詳細 — <span id="rt-detail-id">—</span>
+        <span class="badge" id="rt-detail-status">—</span>
+      </div>
+      <div id="rt-detail" class="detail-grid">
+        <div class="f"><span class="k">name</span>
+          <span class="v" data-field="name"></span></div>
+        <div class="f"><span class="k">emp_id</span>
+          <span class="v" data-field="emp_id"></span></div>
+        <div class="f"><span class="k">variant</span>
+          <span class="v" data-field="variant"></span></div>
+        <div class="f"><span class="k">procedure</span>
+          <span class="v" data-field="procedure"></span></div>
+        <div class="f"><span class="k">target_month</span>
+          <span class="v" data-field="target_month"></span></div>
+        <div class="f"><span class="k">amount</span>
+          <span class="v" data-field="amount"></span></div>
+        <div class="f wide"><span class="k">reason</span>
+          <span class="v" data-field="reason"></span></div>
+      </div>
+
+      <label class="note-label" for="rt-note">コメント</label>
+      <textarea id="rt-note" placeholder="処理内容を入力…"></textarea>
+
+      <div class="actions">
+        <button id="btn-rt-ok" type="button">登録確定</button>
+        <span id="rt-toast" class="toast"></span>
+      </div>
+    </section>
+
+    <section class="pane">
+      <div class="pane-head">一覧 — 処理待ち一覧</div>
+      <table id="rt-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>社員ID</th><th>氏名</th><th>区分</th>
+            <th>金額</th><th>種別</th><th>ステータス</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="row-note">
+        Rows are selected positionally —
+        <code>#rt-table &gt; tbody &gt; tr:nth-of-type(N) &gt; td:nth-of-type(3)</code>.
+        That is the portal's real contract (no case id appears in the row DOM) and it is
+        carried here on purpose: it is the single most likely thing to break this
+        automation on a real screen.
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

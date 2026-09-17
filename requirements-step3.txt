@@ -1,0 +1,8 @@
+# Step 3 only. Steps 1 and 2 remain standard-library-only — nothing in
+# src/segmenter.py, src/roi.py, src/rank_b.py or any diag_*.py imports these.
+#
+#   pip install -r requirements-step3.txt
+#   python3 -m playwright install --with-deps chromium
+#
+playwright>=1.44
+streamlit>=1.33

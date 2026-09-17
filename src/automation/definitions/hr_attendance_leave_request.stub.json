@@ -1,0 +1,100 @@
+{
+  "definition_id": "hr_attendance_leave_request",
+  "definition_version": "0.1.0-stub",
+  "state": "stub",
+  "screen_name": "勤怠・休暇申請",
+  "system_name": "HR人事給与システム",
+
+  "_why_this_file_exists": [
+    "This is the proof that adding a second process is a new JSON file and not new code.",
+    "Everything below is measured from dataset B in exactly the same way the 発注管理 definition was.",
+    "It is NOT runnable here: the prototype ships one mock screen (発注管理), and this",
+    "screen has no mock behind it. `state: stub` is what the engine checks, and it refuses",
+    "to run a stub rather than pretending. Pointing `target.base_url` at a 勤怠・休暇申請 mock",
+    "and flipping `state` to `active` is the entire change — engine.py is untouched.",
+    "",
+    "Note what differs from 発注管理, because this is the part that would have been",
+    "hard-coded in a single-purpose script:",
+    "  * selector prefix   la   instead of   rt",
+    "  * the row is opened on td:nth-of-type(4), not td:nth-of-type(3)",
+    "  * a different column set, a different note template, a different note placeholder",
+    "  * step-2 variant_rate 0.42 against 0.17, so more cases will fail the enum precheck",
+    "    and land in the exception queue — which is the correct outcome, not a regression."
+  ],
+
+  "_provenance": {
+    "measured": [
+      "#la-note / #btn-la-ok — 56 browser_click and 54 browser_form_input events on http://127.0.0.1:5132/#/leave-applications",
+      "row open target td:nth-of-type(4)",
+      "note placeholder 承認コメントまたは差戻し理由を入力してください…",
+      "worklist columns ID / 社員ID / 氏名 / 申請種別 / 期間・詳細 / 部署 / ステータス (10 captures)",
+      "note_template — 36 distinct note values recovered, all conform",
+      "申請種別 vocabulary — 年次有給休暇, 半日有給申請, 代休申請, フレックス変更申請, 特別休暇（慶弔）"
+    ],
+    "engineering_assumption": [
+      "field_schema below mirrors the 発注管理 pane; this screen's detail pane was never captured in full",
+      "commit_allowed_from / expect_after_commit copied from the 発注管理 definition, unverified for this screen"
+    ]
+  },
+
+  "target": {
+    "base_url": "http://127.0.0.1:5232",
+    "route": "/#/leave-applications"
+  },
+
+  "selectors": {
+    "table": "#la-table",
+    "row": "#la-table > tbody > tr:nth-of-type({n})",
+    "row_open": "#la-table > tbody > tr:nth-of-type({n}) > td:nth-of-type(4)",
+    "row_cell": "#la-table > tbody > tr:nth-of-type({n}) > td:nth-of-type({col})",
+    "detail_root": "#la-detail",
+    "detail_field": "#la-detail [data-field='{field}']",
+    "note": "#la-note",
+    "commit": "#btn-la-ok"
+  },
+
+  "row_columns": {
+    "id": 1,
+    "emp_id": 2,
+    "name": 3,
+    "shinsei_shubetsu": 4,
+    "period": 5,
+    "department": 6,
+    "status": 7
+  },
+
+  "field_schema": {
+    "name":             {"required": true, "source": "detail pane (DOM)"},
+    "emp_id":           {"required": true, "source": "detail pane (DOM)", "pattern": "^E\\d{4}$"},
+    "shinsei_shubetsu": {"required": true, "source": "detail pane (DOM)",
+                         "enum": ["年次有給休暇", "半日有給申請", "代休申請",
+                                  "フレックス変更申請", "特別休暇（慶弔）"]},
+    "acquired_date":    {"required": true, "source": "detail pane (DOM)", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}
+  },
+
+  "row_schema": {
+    "status": {
+      "commit_allowed_from": ["未処理"],
+      "expect_after_commit": "登録済み"
+    }
+  },
+
+  "write": {
+    "field": "note",
+    "template": "勤怠申請確認。種別：{shinsei_shubetsu}。取得日：{acquired_date}。問題なし承認。"
+  },
+
+  "policy": {
+    "commit_attempts": 1,
+    "retry_on_failure": false,
+    "verify_timeout_ms": 4000,
+    "on_unrecognised": "queue",
+    "on_verify_failure": "queue"
+  },
+
+  "baseline": {
+    "median_manual_cycle_s": 9.0,
+    "source": "reports/step2_process_metrics.csv, median_s for hr_attendance_leave_request (56 observed cases)",
+    "caveat": "test-environment recording, dwell_scale 1.4 — relative only"
+  }
+}

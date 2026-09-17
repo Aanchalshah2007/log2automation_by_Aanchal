@@ -1,0 +1,88 @@
+{
+  "definition_id": "fin_purchase_order_management",
+  "definition_version": "1.0.0",
+  "state": "active",
+  "screen_name": "発注管理",
+  "system_name": "財務会計システム",
+
+  "_provenance": {
+    "measured": [
+      "selector_prefix 'rt' and the three targets #rt-table / #rt-note / #btn-rt-ok — 69 browser_click and 68 browser_form_input events on http://127.0.0.1:5133/#/resident-tax",
+      "row open target td:nth-of-type(3) — every row-open click in dataset B lands on column 3",
+      "detail-pane field names name/emp_id/variant/procedure/target_month/reason — one full extracted_text capture of the 発注管理 detail pane",
+      "note_template — 68 distinct note values recovered from keystroke target_field.value, all conform",
+      "note placeholder 処理内容を入力…",
+      "種別 vocabulary {定常, 調整} — the portal's uniform worklist flag",
+      "status vocabulary {未処理, 登録済み, 完了, 照合中, 未確認} — 104 status readings across dataset B"
+    ],
+    "engineering_assumption": [
+      "the detail pane exposes its values under [data-field] — the real detail-pane DOM was never captured (no browser_click ever landed in it), only its rendered text",
+      "commit_allowed_from 未処理 / expect_after_commit 登録済み — dataset B's 発注管理 captures actually show 未確認 and 完了 on this screen (34 and 43 readings); 未処理/登録済み is the wording of the sibling payroll-items screens. Which pair is live is a one-line change here, which is the whole reason it lives in this file",
+      "variant V2_adjust_po — only V1_routine_po was ever captured",
+      "verify_timeout_ms, the single-attempt commit policy, and every precondition check: dataset B contains 0 observed failures in 684 cases, so the failure branch is designed, not learned (step2 §7.5)"
+    ]
+  },
+
+  "target": {
+    "base_url": "http://127.0.0.1:5233",
+    "route": "/#/resident-tax"
+  },
+
+  "selectors": {
+    "table": "#rt-table",
+    "row": "#rt-table > tbody > tr:nth-of-type({n})",
+    "row_open": "#rt-table > tbody > tr:nth-of-type({n}) > td:nth-of-type(3)",
+    "row_cell": "#rt-table > tbody > tr:nth-of-type({n}) > td:nth-of-type({col})",
+    "detail_root": "#rt-detail",
+    "detail_field": "#rt-detail [data-field='{field}']",
+    "note": "#rt-note",
+    "commit": "#btn-rt-ok"
+  },
+
+  "row_columns": {
+    "id": 1,
+    "emp_id": 2,
+    "name": 3,
+    "kubun": 4,
+    "amount": 5,
+    "shubetsu": 6,
+    "status": 7
+  },
+
+  "field_schema": {
+    "name":         {"required": true,  "source": "detail pane (DOM)"},
+    "emp_id":       {"required": true,  "source": "detail pane (DOM)", "pattern": "^V\\d{4}$"},
+    "variant":      {"required": true,  "source": "detail pane (DOM)", "enum": ["V1_routine_po", "V2_adjust_po"]},
+    "procedure":    {"required": true,  "source": "detail pane (DOM)"},
+    "target_month": {"required": true,  "source": "detail pane (DOM)", "pattern": "^\\d{4}-\\d{2}$"},
+    "amount":       {"required": true,  "source": "detail pane (DOM)"},
+    "reason":       {"required": true,  "source": "detail pane (DOM)"}
+  },
+
+  "row_schema": {
+    "shubetsu": {"enum": ["定常", "調整"]},
+    "status": {
+      "commit_allowed_from": ["未処理"],
+      "expect_after_commit": "登録済み"
+    }
+  },
+
+  "write": {
+    "field": "note",
+    "template": "発注管理処理。{reason}。発注書確認・登録完了。"
+  },
+
+  "policy": {
+    "commit_attempts": 1,
+    "retry_on_failure": false,
+    "verify_timeout_ms": 4000,
+    "on_unrecognised": "queue",
+    "on_verify_failure": "queue"
+  },
+
+  "baseline": {
+    "median_manual_cycle_s": 11.0,
+    "source": "reports/step2_process_metrics.csv, median_s for fin_purchase_order_management (77 observed cases)",
+    "caveat": "test-environment recording, dwell_scale 1.4 — relative only"
+  }
+}
