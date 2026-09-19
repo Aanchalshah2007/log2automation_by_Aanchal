@@ -25,14 +25,16 @@ and why, what stays manual, the expected impact and its caveats, and the rollout
 The per-step reports below are the depth behind it.
 
 
-**Just want the reasoning?** → [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md).
+
+**Want the reasoning?** → [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md).
 **Want to run the prototype?** → [Run the prototype (step 3)](#run-the-prototype-step-3).
+
 
 | Deliverable | Where it lives |
 |---|---|
 | **Step 1 — recovered units of work** | [`segments.jsonl`](segments.jsonl) — 684 segments, 15 sessions, 12 processes · method and validation in [`reports/step1_segmentation_report.md`](reports/step1_segmentation_report.md) |
 | **Step 2 — analysis + prioritised candidates** | [`reports/step2_analysis.md`](reports/step2_analysis.md) · every metric in [`reports/step2_process_metrics.csv`](reports/step2_process_metrics.csv) and [`reports/step2_metrics.json`](reports/step2_metrics.json) |
-| **Step 3 — working prototype** | `src/mock_portal/` · `src/automation/` · `src/app.py` · build notes in [`reports/step3_build_notes.md`](reports/step3_build_notes.md) |
+| **Step 3 — working prototype** | build notes in [`reports/step3_build_notes.md`](reports/step3_build_notes.md) · code in `src/mock_portal/`, `src/automation/`, `src/app.py` · [how to run it](#run-the-prototype-step-3) |
 | **The consolidated report** | [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md) |
 | **Working log** | [`WORKLOG.md`](WORKLOG.md) — day by day: what was tried, what failed, and why |
 
