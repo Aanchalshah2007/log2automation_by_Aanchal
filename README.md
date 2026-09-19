@@ -24,6 +24,10 @@ consolidated read covering all three steps: the ranking and its reasoning, what 
 and why, what stays manual, the expected impact and its caveats, and the rollout risks.
 The per-step reports below are the depth behind it.
 
+
+**Just want the reasoning?** → [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md).
+**Want to run the prototype?** → [Run the prototype (step 3)](#run-the-prototype-step-3).
+
 | Deliverable | Where it lives |
 |---|---|
 | **Step 1 — recovered units of work** | [`segments.jsonl`](segments.jsonl) — 684 segments, 15 sessions, 12 processes · method and validation in [`reports/step1_segmentation_report.md`](reports/step1_segmentation_report.md) |
