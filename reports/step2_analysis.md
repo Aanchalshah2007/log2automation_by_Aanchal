@@ -17,8 +17,9 @@ Evidence is tagged throughout, as in the step-1 report:
 **Automate `fin_purchase_order_management` (発注管理, supplier-registration purchase
 orders) first.** It ranks first on Client_ROI in the base ranking and in all three
 robustness re-runs, by a margin of 1.4×–2.2× over the runner-up, and it is also the
-second most buildable process in the set. It is the Step-3 target; nothing had to be
-deferred to make that work.
+third most buildable process in the set (`Build_Fit` 0.80, behind
+`hr_attendance_leave_request` 0.97 and `ops_it_access_request` 0.85). It is the Step-3
+target; nothing had to be deferred to make that work.
 
 The process with the most volume — `hr_expense_and_pay_change`, 134 cases and 26.5 of
 the 163 segmented minutes — is **not** the recommendation. It writes to payroll and tax
@@ -443,7 +444,8 @@ rate.
 ## 7. Recommendation for Step 3
 
 **Build `fin_purchase_order_management` (発注管理).** It is the highest Client_ROI process
-*and* has high Build_Fit (0.80, second only to `hr_attendance_leave_request`'s 0.97).
+*and* has high Build_Fit (0.80, third behind `hr_attendance_leave_request`'s 0.97 and
+`ops_it_access_request`'s 0.85).
 **Nothing was deferred to reach that answer, and no easy process is being relabelled as
 #1** — the two rankings simply agree here, which is the fortunate case rather than the
 usual one.

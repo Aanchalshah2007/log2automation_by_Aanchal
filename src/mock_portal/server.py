@@ -11,6 +11,10 @@ Routes
     GET  /                 the screen
     GET  /api/state        the whole worklist (used by the page, and by the
                            Streamlit UI to show what is pending)
+    GET  /api/rev          {epoch, rev} only — the cheap "has anything changed?"
+                           probe the embedded copy of the screen watches so that
+                           it repaints when, and only when, this server's state
+                           actually moved
     POST /api/commit       {case_id, note} -> the portal's own commit logic.
                            Called by the PAGE, never by the automation: the
                            automation clicks #btn-rt-ok like an operator does.
@@ -74,12 +78,18 @@ def reset(n: int = 18) -> None:
         # tell without having to diff the cases. This is what stops the review UI
         # and the portal from silently disagreeing about which demo is running.
         _STATE["epoch"] = uuid.uuid4().hex[:12]
+        # rev is monotonic for the LIFETIME OF THE PROCESS and deliberately not
+        # reset with the worklist: a watcher that slept through a reset sees its
+        # number go up, not back to zero, so it cannot mistake a fresh worklist
+        # for the one it already has.
+        _STATE["rev"] = _STATE.get("rev", 0) + 1
 
 
 def _public_state() -> dict:
     """What the page and any observer may see. `_mock` never leaves the server."""
     return {
         "epoch": _STATE["epoch"],
+        "rev": _STATE.get("rev", 0),
         "server_id": SERVER_ID,
         "pid": os.getpid(),
         "port": _STATE.get("port"),
@@ -97,6 +107,10 @@ def _public_state() -> dict:
 def commit(case_id: str, note: str) -> dict:
     """The portal's commit. Returns {ok, code, toast}."""
     with _LOCK:
+        # Every path out of this function changes something an observer can see —
+        # the row's status, the toast, or both — so the revision moves on entry and
+        # no branch below can forget to move it.
+        _STATE["rev"] = _STATE.get("rev", 0) + 1
         case = next((c for c in _STATE["cases"] if c["case_id"] == case_id), None)
         if case is None:
             _STATE["toast"] = f"{case_id}: 該当データがありません"
@@ -138,16 +152,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):   # keep the demo terminal readable
         pass
 
+    def end_headers(self):
+        # Nothing this server serves may be cached, and that includes the static
+        # files. An embedded copy of the screen that is re-mounted by the review UI
+        # has to come back with the CURRENT worklist; a 304 on index.html or app.js
+        # would hand it the markup it had at first render, which is precisely the
+        # stale-frame failure this endpoint set exists to rule out.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        super().end_headers()
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/api/rev"):
+            # Deliberately tiny and deliberately NOT the worklist. The embedded
+            # screen asks this question often; it asks for the state itself only
+            # when the answer has changed.
+            return self._json({"epoch": _STATE["epoch"],
+                               "rev": _STATE.get("rev", 0),
+                               "server_id": SERVER_ID})
         if self.path.startswith("/api/state"):
             return self._json(_public_state())
         # "/", "/?embed=1", "/#/resident-tax" all mean the screen. The embed flag is

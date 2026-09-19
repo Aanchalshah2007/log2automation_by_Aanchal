@@ -105,3 +105,23 @@ body.embed #rt-table td:nth-of-type(4){max-width:112px; overflow:hidden;
   text-overflow:ellipsis}
 body.embed .detail-grid{grid-template-columns:repeat(2,1fr)}
 body.embed .row-note{font-size:10.5px}
+
+/* --- a row that just flipped -------------------------------------------- */
+/* Applied for one animation only, to the cells whose ステータス changed between two
+   paints. It exists so that a commit is visible as it happens rather than only
+   findable by comparing the table with what you remember of it. */
+@keyframes rt-flip{
+  0%   {background:#fde68a; box-shadow:inset 0 0 0 2px #d97706}
+  55%  {background:#fde68a; box-shadow:inset 0 0 0 2px #d97706}
+  100% {background:transparent; box-shadow:none}
+}
+@keyframes rt-flip-row{
+  0%   {background:#fffbeb}
+  55%  {background:#fffbeb}
+  100% {background:transparent}
+}
+#rt-table td.flip{animation:rt-flip 1.8s ease-out 1}
+#rt-table tr.flip-row td{animation:rt-flip-row 1.8s ease-out 1}
+@media (prefers-reduced-motion:reduce){
+  #rt-table td.flip,#rt-table tr.flip-row td{animation:none}
+}

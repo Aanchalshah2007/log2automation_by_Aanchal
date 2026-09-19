@@ -243,7 +243,7 @@ The recommended target is:
 
 **`fin_purchase_order_management` (発注管理)**
 
-It has the highest `Client_ROI` and the second-highest `Build_Fit`, making it the right Step-3 target without sacrificing the client's objective.
+It has the highest `Client_ROI` and the third-highest `Build_Fit` (0.80, behind `hr_attendance_leave_request` 0.97 and `ops_it_access_request` 0.85), making it the right Step-3 target without sacrificing the client's objective.
 
 The volume leader came second despite having **1.7× as many cases**.
 
@@ -375,7 +375,7 @@ data told me.
 
 ## Day 5,6 - 2026-09-17 & 2026-09-18
 
-### Step 3 - From feasibility to a working automation
+### Step 3 - From feasibility to a working automation and debugging
 
 After completing the Step-2 feasibility audit, I moved from measuring the workflow to proving that `fin_purchase_order_management` could actually be automated. I deliberately chose a deterministic, configuration-driven automation rather than introducing an LLM into the runtime path. The objective was to build the smallest system that could demonstrate the measured workflow end-to-end while remaining auditable and safe around failures.
 
@@ -556,8 +556,187 @@ The final quantitative claims were validated through the actual end-to-end execu
 
 ### Result
 
-By the end of Day 4, Step 3 had moved from a feasibility claim to a **working, observable, failure-aware prototype**:
+By the end of Day 5 and 6, Step 3 had moved from a feasibility claim to a **working, observable, failure-aware prototype**:
 
 **Measured workflow → deterministic automation → human review → portal action → independent verification → auditable outcome**
 
 The prototype does not claim to be production-ready. Its purpose is to demonstrate that the highest-value measured workflow can be automated with controlled execution, explicit uncertainty handling, and a clear boundary between what the data proves and what engineering assumptions are required.
+
+---
+
+## Day 7 - 2026-09-19
+
+### Assembling the deliverables
+
+Day 7 was the day I had planned for testing and the final report, and it stayed that way.
+The work was consolidating four separate reports into one an evaluator can read start to
+finish (`reports/FINAL_REPORT.md`), fixing the README so a fresh clone actually runs, and
+checking that the numbers I have been quoting all week still come out of the files rather
+than out of my memory of them.
+
+The detail reports stay where they are. The final report references them rather than
+restating them, because the depth is the point of having them.
+
+### Verifying the repository rather than trusting it
+
+I ran the two checkers instead of assuming they still passed:
+
+- `src/qa_segments.py` - **14 checks, all passed**. `segments.jsonl` holds **684 segments
+  across 15 sessions and 12 process labels**, exact field set `start / end / label /
+  session_id`, no overlaps, no duplicates, no impossible durations, no >60 s silent gap
+  inside a segment, every `session_id` resolving to a real session directory. Segment time
+  is 163 of 176 recorded minutes (93%).
+- `src/verify_step2.py` - **235 checks, 0 mismatches**. Every table in the step-2 report
+  reconciles against the generated artefacts.
+
+Both numbers agree with `step2_metrics.json` (`cases 684, sessions 15, processes 12`), so
+the deliverable and the analysis are describing the same thing.
+
+Checking the ranking numbers back against the CSV also turned up a figure I had been
+repeating all week. I had called `fin_purchase_order_management` the **second** most
+buildable process in the set. Sorting the `build_fit` column of
+`step2_process_metrics.csv` puts it **third** - 0.80, behind `hr_attendance_leave_request`
+0.97 and `ops_it_access_request` 0.85. The recommendation is unaffected, because it never
+rested on that ordinal: the target is chosen on `Client_ROI`, where it is first, and
+`Build_Fit` only has to be high enough that nothing needed deferring. But the number was
+wrong in four places - the Step-2 report §0 and §7, the README, and my own Day-3 entry
+above - and I corrected all four rather than leave a figure in the deliverables that the
+CSV contradicts. **I have edited the Day-3 entry, which is the one piece of back-dated editing
+in this log, and this paragraph is here so that is on the record.**
+
+### Two runs, not one number
+
+Day 7 was meant to be testing, and the thing I most wanted to avoid was shipping a single
+staged number. So the report presents two runs, both read out of `build/audit_log.jsonl`
+and both identified by their portal epoch, which is the unit of one seeded worklist.
+
+**Run A, the headline** - epoch `755859baf586`: reset, three live approvals, then the
+remaining fifteen batched. **14 automated / 4 queued**, `before 198.0s -> after 87.6s`,
+**~56% of hands-on time removed**. The four queued cases are exactly the four seeded
+unautomatable ones.
+
+**Run B, the robustness check** - epoch `bc555a988b9f`: reset, four live approvals, then
+fourteen batched. **13 automated / 5 queued**, ~41%.
+
+The fifth exception in Run B is the interesting one, and it is not what I assumed when I
+went looking for it. I expected another verify failure. The audit record says otherwise:
+`P10-07054374-002`, code **`PATTERN_MISMATCH`**, stage `precheck`, `commit_attempts: 0`,
+and `edits: {'emp_id': 'V30018'}`. That was **me**, using EDIT in the review UI and typing
+an employee id with five digits where the definition's schema requires `^V\d{4}$`.
+
+I like that result more than the one I went looking for. The four seeded failures test the
+branches I wrote on purpose. This one was not seeded by anybody - it was a human error
+introduced at review time, and the precheck refused it before a single character reached
+the portal. It is the only evidence in the project that the defensive path generalises past
+the failures it was designed against, which is precisely the thing §7.5 says cannot be
+demonstrated from the logs.
+
+It also shows the metric behaving correctly rather than flatteringly: one extra exception
+drops the saving from ~56% to ~41%, because a queued case is charged the full manual cycle.
+A number that did not fall there would be the wrong number.
+
+**What I did not do:** scrub the 13/5 run. Reporting only Run A would have been a better
+headline and a worse piece of engineering evidence.
+
+### What did not work - the three Step 3 bugs that cost the most
+
+Keeping the same framing as the earlier days: these are implementation risks I lived, and
+they are more useful written down than tidied away. None of them were problems with the
+automation logic. All three were problems with the *environment the automation runs in*,
+which is exactly the class of risk the operation logs cannot show.
+
+**1. A space in the machine's own username stopped the engine launching.** On the
+evaluation machine, APPROVE returned *"The automation engine produced no run"* and stderr
+said `C:\Users\Aanchal: can't open file 'C:\...`. All 18 cases stayed pending, the portal
+was untouched, and pressing 登録確定 by hand then gave 「処理内容が未入力です」 - the portal
+being correct, not a second bug.
+
+I want to record the cause accurately, because my own first guess about it was wrong. The
+`subprocess.Popen` in `src/app.py` was *already* a list with `shell=False`, so it was never
+the problem. The broken call was `os.execv(sys.executable, [sys.executable] + sys.argv)` in
+`engine.py`, which re-exec'd the interpreter to set `LD_LIBRARY_PATH`. On POSIX `execv`
+takes a real argument vector and a space is harmless; **on Windows there is no exec** - the
+CRT joins the vector into one command line without quoting, so `C:\Users\Aanchal Shah\...`
+split at the space and `argv[0]` became `C:\Users\Aanchal`. Two things made it reachable:
+the shim was not OS-gated, and `build/pwdeps/` is a Linux artefact sitting on a path Windows
+can also see, so the directory test passed there too.
+
+The fix was to delete the re-exec rather than to quote it. Chromium is a child process and
+inherits `os.environ` at spawn, so setting the variable in-process is enough; the shim is
+now `if os.name != "posix": return`, and there is no exec anywhere in the program. Behind
+it was the same class of bug again: a Windows console defaults to cp1252 and every string
+this program prints is Japanese, so the engine died with `UnicodeEncodeError` the moment it
+wrote the note, and the portal died the same way on its own startup banner. Both now force
+UTF-8 before writing anything. Full write-up in build notes **§5b.5-5b.6**.
+
+**2. RESET, the engine and the browser tab did not share one source of truth.** A run could
+report *"0 automated, 18 queued, negative saving"* while the portal visibly held a fresh
+worklist, and a case approved in the UI could fail to change in a separately opened tab.
+
+`netstat` showed **two processes listening on `127.0.0.1:5233` at once**, holding entirely
+different state behind the same URL - one spent (14 登録済み / 1 完了 / 3 未処理), one fresh
+(17 未処理 / 1 完了). Which one a client reached was decided by the TCP stack. The cause was
+mine: `allow_reuse_address = True` on the server. On Linux `SO_REUSEADDR` only relaxes
+TIME_WAIT; **on Windows it genuinely lets a second process bind an already-bound address**.
+Measured directly: `SO_REUSEADDR=True -> SECOND BIND SUCCEEDED`, `False -> refused, errno
+10048`.
+
+There was a second, independent half to this. Streamlit kept "what has been decided" in
+`st.session_state`, so a browser reload forgot work already done to the same worklist and
+then offered an already-committed case for approval again. The engine refused it correctly
+with `STATUS_NOT_COMMITTABLE` - the row was 登録済み, and commit is only allowed from 未処理 -
+but the visible result was **13 automated / 5 queued instead of 14 / 4**. The counter was
+not lying; the dashboard had simply asked the wrong question.
+
+I treated this as an architecture problem rather than a counter bug, which is the decision
+I am most glad I made. The portal process owns row state in memory with no second copy;
+the audit log owns what the automation attempted; counters are now *derived* from those two
+on every redraw and never incremented. `automated` additionally requires the portal to
+corroborate the audit record, a duplicate portal can no longer start, every audit record
+carries `portal_server_id` and `portal_epoch`, and the engine refuses to write to a portal
+the reviewer is not reading. The invariant `worklist == awaiting + automated + queued` is
+rendered as a visible error if it ever fails rather than asserted away. Build notes **§5c**.
+
+**3. The embedded portal showed a snapshot, not the portal.** The first approved case
+updated the embedded frame and every case after it did not, until I reloaded by hand - so
+the dashboard could say `Row 3 changed 未処理 → 登録済み, confirmed by reading the row back`
+beside a frame still showing 未処理.
+
+Two causes, and fixing only the obvious one would have left the batch broken. The page
+fetched `/api/state` once at first render and the engine drives the portal in its *own*
+browser, so a commit there was invisible to the frame. And `dispatch()` blocks the
+Streamlit script for the whole run while Streamlit paints in script order, so with the
+review column emitted first the frame on screen during a run was the greyed-out leftover
+from the previous rerun - during a 14-case batch, never repainted until all 14 finished.
+The portal now exposes a monotonic `rev` counter on `/api/rev`; the embedded copy re-reads
+the worklist only when the server says state moved, and the portal column is emitted before
+the review column. Verified in a browser: **14 of 14 rows flip one at a time with the frame
+never reloaded**, and three one-at-a-time approvals each flip within ~2 s.
+
+### What this pattern actually says
+
+Step 2 §7.5 argued the *failure branch* would be the expensive part of a build. It was not.
+What cost the most was the host: a username with a space, a console codepage, and a socket
+option that means two different things on two operating systems. None of that is visible in
+the operation logs the entire analysis is built on, and no further analysis of those logs
+would have produced it. The mitigation is not cleverer code - it is running the thing on a
+machine that is not the developer's before calling it done.
+
+That is also why the final report keeps the failure branch tagged as an engineering
+assumption rather than a measurement. **0 of 684 observed cases failed**, so every rule
+about what happens on a bad case is designed, not learned.
+
+### AI Usage
+
+Claude Code executed and drafted: it wrote the consolidated report and README to my
+outline, ran the verification scripts, implemented the `/api/rev` refresh and the exception
+queue surfacing, and drove the browser-based checks. It also caught that my own account of
+the Windows launch bug was wrong - I had remembered it as a quoting problem in the
+`Popen`, and the artefact says the `Popen` was always a list and the culprit was the
+`os.execv`. I kept the artefact's version.
+
+The judgment calls stayed mine: treating the portal-state problem as an architecture
+question rather than a counter bug, refusing blind retries when the logs show no failure to
+learn from, keeping Client_ROI and Build_Fit separate so that what is convenient for me
+never enters the client's ranking, insisting the time-saved number stays a relative ratio,
+and deciding what to leave explicitly manual rather than automate on no evidence.

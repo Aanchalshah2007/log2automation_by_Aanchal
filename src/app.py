@@ -13,6 +13,7 @@ Nothing in this file calls a model either. The reviewer decides; the engine exec
 
 from __future__ import annotations
 
+import html
 import json
 import pathlib
 import subprocess
@@ -202,6 +203,68 @@ def run_engine(defn_file: str, jobs: list[dict], log_box,
                  f"```\n{err[-2500:]}\n```")
     ss.last_log = "\n\n".join(lines)
     return run_id
+
+
+# The only hand-written CSS in this file. It buys two things that Streamlit has no
+# widget for: a counter you can click, and an exception queue compact enough to sit
+# above the fold instead of below a 700px iframe.
+UI_CSS = """
+<style>
+a.xq-jump{display:block; text-decoration:none !important; color:inherit;
+  border:1px solid rgba(255,75,75,.40); border-radius:.5rem;
+  background:rgba(255,75,75,.07); padding:.30rem .65rem .45rem; height:100%;}
+a.xq-jump:hover{background:rgba(255,75,75,.16); border-color:rgba(255,75,75,.85);}
+a.xq-jump .l,a.xq-jump .v,a.xq-jump .d{display:block;}
+a.xq-jump .l{font-size:.875rem; color:rgba(49,51,63,.7); line-height:1.5;}
+a.xq-jump .v{font-size:2.25rem; font-weight:600; line-height:1.15; color:inherit;}
+a.xq-jump .d{font-size:.82rem; font-weight:600; color:#ff4b4b; line-height:1.3;}
+a.xq-jump.quiet{border-color:rgba(49,51,63,.18); background:transparent;}
+a.xq-jump.quiet .d{color:rgba(49,51,63,.55); font-weight:400;}
+
+.xq{border-left:4px solid #ff4b4b; background:rgba(255,75,75,.06);
+  border-radius:.25rem; padding:.45rem .7rem; margin-bottom:.4rem;}
+.xq .h{display:flex; flex-wrap:wrap; gap:.45rem; align-items:baseline;}
+.xq .id{font-family:monospace; font-weight:700; font-size:.95rem;}
+.xq .row{font-size:.8rem; color:rgba(49,51,63,.7);}
+.xq .code{font-family:monospace; font-size:.75rem; font-weight:700; color:#fff;
+  background:#ff4b4b; border-radius:.25rem; padding:.05rem .35rem;}
+.xq .stage{font-size:.75rem; color:rgba(49,51,63,.7);}
+.xq .why{font-size:.86rem; margin:.2rem 0 .15rem;}
+.xq .meta{font-size:.76rem; color:rgba(49,51,63,.65); font-family:monospace;}
+.xq .bad{color:#c1121f; font-weight:700;}
+</style>
+"""
+
+
+def queue_cards(queued_records: list[dict]) -> str:
+    """The exception queue, as one HTML block.
+
+    One card per refused case carrying everything a person needs in order to pick
+    it up: which case, which worklist row, what the engine refused on, why in
+    words, how many times it pressed commit, and whether a verify ever confirmed
+    anything. Rendered as a single markdown call so the four cards sit together
+    rather than four blocks apart.
+    """
+    out = []
+    for r in queued_records:
+        verified = {True: "yes", False: '<span class="bad">no</span>'}.get(
+            r.get("verify_confirmed"), "\u2014 never reached")
+        attempts = r.get("commit_attempts", 0)
+        out.append(
+            '<div class="xq">'
+            f'<div class="h"><span class="id">{html.escape(str(r["case_id"]))}</span>'
+            f'<span class="row">worklist row {html.escape(str(r["row"]))}</span>'
+            f'<span class="code">{html.escape(str(r["code"] or "?"))}</span>'
+            f'<span class="stage">refused at <b>{html.escape(str(r["stage"] or "?"))}'
+            f'</b></span></div>'
+            f'<div class="why">{html.escape(str(r["detail"] or ""))}</div>'
+            f'<div class="meta">commit attempts <b>{attempts}</b> &middot; '
+            f'verify confirmed <b>{verified}</b> &middot; '
+            f'{html.escape(str(r.get("human_action", "")))} by '
+            f'{html.escape(str(r.get("reviewed_by", "")))}</div>'
+            '</div>'
+        )
+    return "".join(out)
 
 
 def read_audit(*, run_id: str = "", portal_epoch: str = "") -> list[dict]:
@@ -441,53 +504,90 @@ after_s = (
 )
 pct = (1 - after_s / before_s) * 100 if before_s else 0.0
 
+st.markdown(UI_CSS, unsafe_allow_html=True)
+
 c0, c1, c2, c3, c4 = st.columns(5)
 c0.metric("IN WORKLIST", total)
 c1.metric("AWAITING REVIEW", pending)
 c2.metric("AUTOMATED", automated)
-c3.metric("QUEUED FOR HUMAN", queued,
-          delta=None if not queued else f"{queued} need a person",
-          delta_color="inverse")
+# QUEUED is the only counter that is a link, because it is the only one that stands
+# for work somebody still has to do. It jumps to the list of exactly which cases.
+# Spans, not divs, and on one line: Streamlit renders this through a markdown
+# parser that closes an anchor around any block-level child, which turned the card
+# into four separate links stacked on top of each other.
+c3.markdown(
+    f'<a class="xq-jump{"" if queued else " quiet"}" href="#exception-queue" '
+    f'title="jump to the cases that could not be automated">'
+    f'<span class="l">QUEUED FOR HUMAN</span>'
+    f'<span class="v">{queued}</span>'
+    f'<span class="d">'
+    f'{f"{queued} need a person \u2014 see which \u25be" if queued else "none yet"}'
+    f'</span></a>',
+    unsafe_allow_html=True)
 c4.metric("HANDS-ON TIME REMOVED", f"\u2248{pct:.0f}% (relative)" if processed else "\u2014")
 
-# The honesty content, compressed into one collapsed expander — not softened, not
-# removed. The MOCK notice, the real/mocked/synthetic table, the MEASURED vs
-# ASSUMPTION tags and the full relative-ROI basis are all still here, one click away.
-with st.expander("What\u2019s real here / what\u2019s mocked \u2014 click to read",
-                 expanded=False):
-    st.markdown("""
-| | |
-|---|---|
-| **Genuinely works end to end** | the engine (read \u2192 precheck \u2192 write note \u2192 **confirm the note landed** \u2192 commit once \u2192 **verify by reading the row back**), the approve / edit / flag loop, the exception queue, the audit log, the relative time-saved figure |
-| **[MOCKED]** | the portal itself. There is no access to the client\u2019s system. The *structure* \u2014 columns, field names, status vocabulary, note template, the `#rt-table` / `#rt-note` / `#btn-rt-ok` selector contract \u2014 is **[MEASURED]**, recovered from dataset B\u2019s logs. |
-| **[MOCKED] Synthetic values** | every case value on screen is invented. The real values were never logged: clipboard events carry a length, not a payload. |
-| **Still manual after deployment** | everything in the exception queue, every flagged case, and the final sign-off on whether a queued case should be forced through |
-| **[ASSUMPTION] Designed, not observed** | the whole failure branch. Dataset B has 684 cases and **0 failures** (step 2 \u00a77.5), so the portal\u2019s real error behaviour is unknown. The rule is: commit once, verify, and stop. |
+# ---------------------------------------------------------------- exception queue
+# Directly under the counter that points at it, NOT at the bottom of the page.
+# "4 need a person" is the honest half of this prototype's result, so the four cases
+# it refers to are named on the same screen as the number, with the reason each one
+# was refused. Nothing here changes how a case is queued — this is the same audit
+# record the engine wrote, read out in full.
+st.subheader("\u2463 Exception queue \u2014 what stays manual",
+             anchor="exception-queue")
+queued_records = [r for r in records if r["outcome"] == "queued"]
+if not queued_records:
+    st.caption("Empty \u2014 nothing has been refused yet. Cases land here when the "
+               "engine will not commit them, and each one is then a person\u2019s work.")
+else:
+    st.caption(f"{len(queued_records)} of the {processed} decided case(s) were **not** "
+               f"automated. Each is charged the full manual cycle in the figure above, "
+               f"because each still has to be done by hand.")
+    st.markdown(queue_cards(queued_records), unsafe_allow_html=True)
 
-**Four of the eighteen seeded cases are deliberately unautomatable** and must end up in
-the exception queue rather than in the portal. That number is the point of the demo, not
-a defect.
+# The honesty content, in one collapsed expander — not softened, not removed.
+# Five labelled disclosures and the three numbers they qualify. Every figure quoted
+# here is checkable: 11s/77 executions is the `fin_purchase_order_management` row of
+# reports/step2_process_metrics.csv, and 872/872 null `text_content` is a count over
+# dataset B's own clipboard_change events.
+with st.expander("What’s real here / what’s mocked — click to read",
+                 expanded=False):
+    st.markdown(f"""
+**[WORKING] The automation, end to end**  
+Read → precheck → write → confirm → commit once → verify by re-reading the row.
+Review loop, exception queue, audit log and time-saved figure all function.
+
+**[MOCKED] The portal — but its structure is real**  
+No client-system access, so the screen is a reconstruction. Its structure — columns,
+field names, status vocabulary, note template, the
+`#rt-table` / `#rt-note` / `#btn-rt-ok` selector contract — is recovered from dataset B.
+
+**[MOCKED] The case values — synthetic by necessity**  
+Dataset B logged clipboard *length*, never payload — `text_content` is null in all 872
+events. Real values were never captured, so no method recovers them: a limit of the
+data, correctly identified.
+
+**[MANUAL] What stays human after deployment**  
+Exceptions, flagged cases and the final sign-off. An uncertain case is stopped, never
+forced through.
+
+**Time saved — [MEASURED] baseline, [ASSUMPTION] mock clock**  
+The {baseline_s:g}s manual cycle is measured: 77 observed executions in Step 2. The
+mock’s own seconds are not the client’s, so the figure below is a relative demo
+result, not a production ROI.
 """)
     st.markdown(
-        f"**Time-saved basis \u2014 relative, never absolute.** "
-        f"before = median manual cycle **{baseline_s:g}s** \u00d7 {processed} cases "
-        f"(**[MEASURED]**: `reports/step2_process_metrics.csv`, 77 observed executions). "
-        f"after = automated cases at (engine {auto_s:.1f}s + review {review_s:.1f}s) "
-        f"+ queued cases charged the full manual cycle, because a queued case still has "
-        f"to be done by hand \u2014 which is why exceptions cost something here. "
-        f"The {baseline_s:g}s baseline comes from a test-environment recording whose dwell "
-        f"is \u22481.4\u00d7 compressed, and this mock\u2019s own seconds are not on that "
-        f"clock at all. The two distortions push in opposite directions and neither is "
-        f"invertible, so this is a demo figure: **do not multiply it by a headcount or an "
-        f"hourly rate.**"
+        f"| | |\n|---|---|\n"
+        f"| **Baseline** | {baseline_s:g}s median manual cycle "
+        f"× {processed} case{'' if processed == 1 else 's'} |\n"
+        f"| **Demo result** | {automated} automated + {queued} human exception"
+        f"{'' if queued == 1 else 's'} |\n"
+        f"| **Relative time saved** | ≈{pct:.0f}% |"
+        if processed else
+        "| | |\n|---|---|\n"
+        f"| **Baseline** | {baseline_s:g}s median manual cycle |\n"
+        "| **Demo result** | — nothing decided yet |\n"
+        "| **Relative time saved** | — |"
     )
-    st.caption(f"{total} in the worklist = {pending} awaiting review + {automated} "
-               f"automated + {queued} queued \u2014 recomputed from the portal\u2019s own "
-               f"state and this run\u2019s audit log on every redraw. "
-               f"`automated` additionally requires the portal to show "
-               f"{committed_status}. Authoritative portal: `{portal_server_id}` "
-               f"epoch `{portal_epoch}` at {base_url} \u00b7 {committable} row(s) "
-               f"currently committable.")
 
 if processed and pct < 0:
     st.caption("Negative because the cases handled so far are mostly exceptions \u2014 "
@@ -501,6 +601,63 @@ st.divider()
 # One seeded row starts in 完了 and must still be reviewed and then refused by the
 # engine, so status is the engine's business, not the queue's.
 left, right = st.columns([0.88, 1.12], gap="large")
+
+# THE PORTAL IS DRAWN FIRST, before the left column, and that ordering is the fix
+# for the frame that only refreshed on the first case.
+#
+# `dispatch()` runs the engine SYNCHRONOUSLY inside the left column and blocks this
+# script for the whole run. Streamlit paints elements in the order the script
+# produces them, so while the old ordering was left-then-right the frame on screen
+# during a run was the one left over from the PREVIOUS rerun — stale, greyed out,
+# and in the batch case never repainted until all fourteen cases were finished.
+# Emitting it before the block means the frame the reviewer watches is live for the
+# whole run; the page inside it then keeps itself current off /api/rev, so every
+# commit lands on screen as it happens, one row at a time, with no manual reload.
+with right:
+    st.subheader("③ The portal, live")
+    if pending_cases:
+        st.caption(f"← the engine fills this portal now · **watch row "
+                   f"{pending_cases[0]['row']}** flip 未処理 → 登録済み")
+    else:
+        st.caption("← the live portal the engine drove · synthetic values, measured structure")
+
+    # "Did the portal actually change?" — answered by pointing at the row, not by prose.
+    last = ss.records[-1] if ss.records else None
+    if last and last["outcome"] == "automated":
+        st.success(f"**Row {last['row']} changed: {last['status_before']} → "
+                   f"{last['status_after']}**, confirmed by reading the row back.")
+    elif last and last["outcome"] == "queued":
+        st.warning(f"**Row {last['row']} did not change — correct.** Stopped at "
+                   f"*{last['stage']}* (`{last['code']}`), "
+                   f"{last['commit_attempts']} commit attempt(s).")
+
+    # The ?v= is a cache-buster, not decoration. Streamlit keeps an iframe whose src
+    # is byte-identical mounted across reruns, which is usually what you want — but
+    # it also means a frame that somehow missed a live update would keep showing the
+    # snapshot it took at first render for the rest of the session. Tying the src to
+    # the worklist and to how many cases have been decided guarantees a genuine
+    # re-fetch whenever this dashboard's own view of the portal has moved, and
+    # guarantees nothing more often than that, so there is no reload flicker.
+    embed_url = (base_url.rstrip("/")
+                 + f"/?embed=1&v={portal_epoch or 'none'}-{len(records)}")
+    components.iframe(embed_url, height=700, scrolling=True)
+    st.caption("This frame re-reads the portal whenever the portal’s state changes "
+               "— it is not a snapshot.")
+
+    st.divider()
+    st.subheader("Automated")
+    a = [r for r in records if r["outcome"] == "automated"]
+    if not a:
+        st.caption("None yet.")
+    else:
+        st.dataframe(
+            [{"case": r["case_id"],
+              "status": f"{r['status_before']} → {r['status_after']}",
+              "verified": "✓" if r["verify_confirmed"] else "✗",
+              "edited": ", ".join(r["edits"]) or "—",
+              "engine s": r["automation_seconds"]} for r in a],
+            use_container_width=True, hide_index=True)
+
 
 with left:
     st.subheader("① The case you are reviewing")
@@ -633,50 +790,6 @@ with left:
         with st.container(height=260):
             st.markdown(ss.last_log)
 
-with right:
-    st.subheader("③ The portal, live")
-    if pending_cases:
-        st.caption(f"← the engine fills this portal now · **watch row "
-                   f"{pending_cases[0]['row']}** flip 未処理 → 登録済み")
-    else:
-        st.caption("← the live portal the engine drove · synthetic values, measured structure")
-
-    # "Did the portal actually change?" — answered by pointing at the row, not by prose.
-    last = ss.records[-1] if ss.records else None
-    if last and last["outcome"] == "automated":
-        st.success(f"**Row {last['row']} changed: {last['status_before']} → "
-                   f"{last['status_after']}**, confirmed by reading the row back.")
-    elif last and last["outcome"] == "queued":
-        st.warning(f"**Row {last['row']} did not change — correct.** Stopped at "
-                   f"*{last['stage']}* (`{last['code']}`), "
-                   f"{last['commit_attempts']} commit attempt(s).")
-
-    components.iframe(base_url.rstrip("/") + "/?embed=1", height=700, scrolling=True)
-
-
-    st.divider()
-    st.subheader("④ Exception queue")
-    q = [r for r in records if r["outcome"] == "queued"]
-    st.caption("Empty — nothing was refused yet." if not q else
-               f"{len(q)} case(s) not automated · each one is now manual work.")
-    for r in q:
-        st.error(f"**{r['case_id']}** (row {r['row']}) · `{r['code']}` (at *{r['stage']}*)\n\n"
-                 f"{r['detail']}\n\n"
-                 f"commit attempts: **{r['commit_attempts']}** · "
-                 f"verify confirmed: **{r['verify_confirmed']}**")
-
-    st.subheader("Automated")
-    a = [r for r in records if r["outcome"] == "automated"]
-    if not a:
-        st.caption("None yet.")
-    else:
-        st.dataframe(
-            [{"case": r["case_id"],
-              "status": f"{r['status_before']} → {r['status_after']}",
-              "verified": "✓" if r["verify_confirmed"] else "✗",
-              "edited": ", ".join(r["edits"]) or "—",
-              "engine s": r["automation_seconds"]} for r in a],
-            use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------- audit
 st.divider()

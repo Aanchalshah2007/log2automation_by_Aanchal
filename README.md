@@ -17,13 +17,34 @@ unmodified.
 
 ---
 
+## Start here
+
+**▶ [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md) is the main report** — the
+consolidated read covering all three steps: the ranking and its reasoning, what was built
+and why, what stays manual, the expected impact and its caveats, and the rollout risks.
+The per-step reports below are the depth behind it.
+
+| Deliverable | Where it lives |
+|---|---|
+| **Step 1 — recovered units of work** | [`segments.jsonl`](segments.jsonl) — 684 segments, 15 sessions, 12 processes · method and validation in [`reports/step1_segmentation_report.md`](reports/step1_segmentation_report.md) |
+| **Step 2 — analysis + prioritised candidates** | [`reports/step2_analysis.md`](reports/step2_analysis.md) · every metric in [`reports/step2_process_metrics.csv`](reports/step2_process_metrics.csv) and [`reports/step2_metrics.json`](reports/step2_metrics.json) |
+| **Step 3 — working prototype** | `src/mock_portal/` · `src/automation/` · `src/app.py` · build notes in [`reports/step3_build_notes.md`](reports/step3_build_notes.md) |
+| **The consolidated report** | [`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md) |
+| **Working log** | [`WORKLOG.md`](WORKLOG.md) — day by day: what was tried, what failed, and why |
+
+---
+
 ## Status
 
 | Step | State | Output |
 |---|---|---|
 | **1 — Recover units of work** | **Complete** | [`segments.jsonl`](segments.jsonl) · [report](reports/step1_segmentation_report.md) |
 | **2 — Analyse and prioritise automation candidates** | **Complete** | [report](reports/step2_analysis.md) · [metrics table](reports/step2_process_metrics.csv) |
-| **3 — Build the automation tool** | **Working prototype** | [build notes](reports/step3_build_notes.md) · `src/mock_portal/` · `src/automation/` · `src/app.py` |
+| **3 — Build the automation tool** | **Complete** — working prototype | [build notes](reports/step3_build_notes.md) · `src/mock_portal/` · `src/automation/` · `src/app.py` |
+
+All three steps are complete. Step 3 is a **working prototype against a reconstructed mock
+of the client's screen**, not a production deployment — what is real, what is mocked and
+what stays manual is stated in the final report and in the build notes.
 
 **Step 1 headline.** 684 segments across all 15 dataset-B sessions, 12 discovered
 processes. Validated on dataset A against its ground truth: boundary F1 0.858 at a 2 s
@@ -39,9 +60,10 @@ fact about my week, not the client's business, so it never enters the ranking).
 **`fin_purchase_order_management` (発注管理) ranks first, and stays first in all three
 robustness re-runs** — with the conflated `hr_expense_and_pay_change` label split 50/50,
 with the extension-less session dropped, and with thin OCR evidence discarded — by a
-margin of 1.4x-2.2x. It is also the second most buildable process in the set, so it is
-the Step-3 target with nothing deferred to get there. The volume leader (134 cases, 26.5
-of 163 segmented minutes) places second: it writes to payroll and tax withholding, and
+margin of 1.4x-2.2x. It is also the **third** most buildable process in the set
+(`build_fit` 0.796, behind `hr_attendance_leave_request` 0.965 and `ops_it_access_request`
+0.854), so it is the Step-3 target with nothing deferred to get there. The volume leader
+(134 cases, 26.5 of 163 segmented minutes) places second: it writes to payroll and tax withholding, and
 step 1 established it is two business objectives sharing one worklist.
 
 **Step 3 headline.** A human-in-the-loop prototype for 発注管理: a reconstructed mock of
@@ -52,10 +74,19 @@ Streamlit review UI — with the portal embedded live beside it — where a
 person approves, corrects or flags each case before anything commits. **No LLM runs
 anywhere in the runtime**, and `llm_in_runtime: false` is recorded on every audit record.
 Adding a second process is a new JSON definition, not new code — one full definition
-(発注管理) ships working, one stub (勤怠・休暇申請) proves the shape extends. Of 18 seeded
-cases, 4 are deliberately unautomatable and all 4 land in the exception queue rather than
-committing; replaying the whole job set over an already-processed worklist attempts
-**zero** commits on an already-committed row. What is mocked, what stays manual, and what
+(発注管理) ships working, one stub (勤怠・休暇申請) proves the shape extends. On the headline
+run (**Run A**: reset → 3 live approvals → 15 batched, portal epoch `755859baf586` in
+`build/audit_log.jsonl`) **14 of 18 cases automated and 4 went to the exception queue** —
+the 4 deliberately unautomatable ones — removing **≈56% of hands-on time (relative)**. A
+second run (**Run B**, epoch `bc555a988b9f`) scored **13/5** because a reviewer's edit
+failed the field-schema check and was stopped at precheck before any write; see
+[`reports/FINAL_REPORT.md`](reports/FINAL_REPORT.md) §3.3. All 4 seeded failures land in the
+queue rather than committing; replaying the whole job set over an already-processed worklist attempts
+**zero** commits on an already-committed row. The embedded portal repaints on every
+commit rather than on a manual reload, so rows flip 未処理 → 登録済み one at a time as the
+engine works through them, and the **QUEUED FOR HUMAN** counter is a link to the four
+refused cases — each named with the code it was refused on and the reason in words.
+What is mocked, what stays manual, and what
 was designed rather than observed are all stated in
 [`reports/step3_build_notes.md`](reports/step3_build_notes.md).
 
@@ -109,13 +140,15 @@ src/
   mock_portal/       the local 発注管理 screen (source AND destination)
     server.py          stdlib HTTP server; holds case state so the read-back is real
     cases.py           synthetic case seed, incl. the 4 deliberately failing cases
-    static/            index.html / app.js / styles.css — the reconstructed screen
+    static/            index.html / app.js / styles.css — the reconstructed screen;
+                       the embedded copy repaints off /api/rev when state moves
   automation/        the engine
     engine.py          Playwright runner: read -> precheck -> write -> commit once -> VERIFY
     definitions/       one per process; fin_purchase_order_management.json is live,
                        hr_attendance_leave_request.stub.json proves the shape extends
     setup_browser.sh   no-root fallback if `playwright install --with-deps` cannot run
-  app.py             the Streamlit review UI (approve / edit / flag + live counters)
+  app.py             the Streamlit review UI: approve / edit / flag, live counters,
+                     the exception queue, and the portal embedded live beside it
 
 requirements-step3.txt                step 3 only; steps 1-2 stay stdlib-only
 build/                                derived cache, git-ignored, regenerated on demand
@@ -134,7 +167,7 @@ dataset B is reachable at all?).
 
 ## Running it
 
-Python 3.10+. **No third-party dependencies** — standard library only.
+Python 3.10+. **No third-party dependencies for Step-1 and Step-2** — standard library only.
 
 The two provided dataset directories must sit at the repository root under their original
 names (`dataset_a-20260913T153639Z-1-001/`, `dataset_b-20260913T153602Z-1-001/`). They are
@@ -157,20 +190,26 @@ python3 discover_b.py     # optional: re-run process discovery on B
 
 ## Run the prototype (step 3)
 
-Three processes, started in this order. Step 3 is the only part of this repository with
-third-party dependencies.
+Two processes, started in this order, plus the engine on its own if you want it.
+**Run every command from the repository root.** Step 3 is the only part of this repository
+with third-party dependencies.
 
 **Once, to set up:**
 
 ```bash
-pip install -r requirements-step3.txt
-python3 -m playwright install --with-deps chromium
+pip install -r requirements-step3.txt      # playwright + streamlit
+python3 -m playwright install chromium     # add --with-deps on Linux (needs sudo)
 ```
 
-If that last command fails because `sudo` is unavailable (the symptom is
-`error while loading shared libraries: libnspr4.so`), run
-`bash src/automation/setup_browser.sh` instead. It unpacks what chromium needs into the
-git-ignored `build/` directory and `engine.py` picks it up on its own.
+That is the whole setup on a clean machine.
+
+*Fallback only:* if `--with-deps` cannot run because `sudo` is unavailable — the symptom is
+`error while loading shared libraries: libnspr4.so` — run
+`bash src/automation/setup_browser.sh`. It downloads the `.deb` packages chromium needs and
+unpacks them under the git-ignored `build/pwdeps/`, which `engine.py` adds to
+`LD_LIBRARY_PATH` itself. **This is a local workaround for a no-root Linux box and is not
+part of a normal install** — on a machine where `playwright install --with-deps chromium`
+succeeds, `build/pwdeps/` is never created and never needed.
 
 **1 — the mock portal** (terminal 1). The 発注管理 screen, acting as both the source and
 the destination. **This process is the single source of truth for the portal's row
@@ -189,12 +228,15 @@ itself as a subprocess for each approved case.
 
 ```bash
 streamlit run src/app.py
-#  -> http://localhost:8511
+#  -> http://localhost:8501   (Streamlit's default; pass --server.port to change it)
 ```
 
 Demo flow: press **RESET DEMO** in the sidebar, then approve cases one at a time. The
 portal is embedded live on the right — watch the ステータス column flip 未処理 → 登録済み
-as each case commits, and watch the engine trace on the left go
+as each case commits. **No manual refresh is needed**: the embedded copy watches the
+portal's `/api/rev` and repaints only when the portal's state actually moves — once per
+case, including during the batch, so the rows flip one by one. Watch the engine trace on
+the left go
 `writing the note → ✓ note confirmed in the DOM → committing (once, no retry) →
 verifying… → ✓ 登録済み confirmed`. Then press **Run remaining as batch**. Use **EDIT**
 on at least one case — the value you type is the value that commits, and the audit log
@@ -204,7 +246,11 @@ exception queue instead of committing; that number is the point.
 The counters (**worklist / awaiting review / automated / queued**) are derived from the
 portal's own state plus this run's audit log on every redraw, so they always reconcile:
 `total = pending + automated + queued`. Reseeding the portal in a terminal does not
-desync the dashboard — it rebinds on the next interaction.
+desync the dashboard — it rebinds on the next interaction. **QUEUED FOR HUMAN** is
+clickable: it jumps to the exception queue, which lists every refused case with its case
+id, worklist row, failure code (`STATUS_NOT_COMMITTABLE`, `VERIFY_FAILED`,
+`REQUIRED_FIELD_MISSING`, `ENUM_UNRECOGNISED`), the reason in words, how many times
+commit was pressed, and whether verify ever confirmed anything.
 
 **3 — the engine on its own** (optional). It is a standalone CLI and does not need
 Streamlit; this is how it would run from a scheduler.

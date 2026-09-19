@@ -504,6 +504,9 @@ Two causes, both removed:
   the same worklist — and then offered an already-committed case for approval, which the
   engine correctly refused with `STATUS_NOT_COMMITTABLE`. Observed during this pass: a
   clean run scored 13 automated / 5 queued instead of 14 / 4 for exactly this reason.
+  **Not to be confused with Run B in `FINAL_REPORT.md` §3.3**, which also scored 13 / 5 but
+  for an unrelated and legitimate reason — a reviewer's edit refused at precheck with
+  `PATTERN_MISMATCH`. This one was a bug and was fixed; that one is the guard working.
 
 Counters are now derived on every redraw from **two** authoritative sources and nothing
 else — the portal's live state, and the audit log filtered by the portal's current epoch:
@@ -635,7 +638,7 @@ these notes. That belongs in `WORKLOG.md`, not in the runtime.
 
 **Why not n8n / Power Automate.** Both would work for the happy path. Neither gives a
 review surface where a human corrects a field before it commits, and both put the
-verify-and-queue logic into a GUI that is harder to review than ~460 lines of Python.
+verify-and-queue logic into a GUI that is harder to review than ~590 lines of Python.
 The governance questions in §7.5 are answered by reading code and a definition file,
 not by reading a flowchart.
 
