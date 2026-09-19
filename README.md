@@ -4,6 +4,8 @@
 ## Personal Email ID - aanchalshah2007@gmail.com
 ## Institute Email ID - aanchalshah2007.24@kgpian.iitkgp.ac.in
 
+>> **Commits:** MeetShah2105 and Aanchalshah2007 are both me (git identity changed during mid-project); "claude" co-author = Claude Code, logged in [`WORKLOG.md`](WORKLOG.md).
+>> 
 # Operation logs → automation proposal
 
 The client runs a desktop agent that records every keystroke, click
